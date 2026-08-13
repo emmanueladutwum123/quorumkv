@@ -1,8 +1,11 @@
 package raft
 
 import (
+	"fmt"
 	"math/rand/v2"
 	"sort"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -53,13 +56,62 @@ func (s *memStorage) persist(rd Ready) {
 	}
 }
 
+// snapshotHolder is the driver's side of snapshotting: the state machine takes a
+// snapshot when asked, and the consensus core pulls the most recent one when it
+// needs to catch up a follower that has fallen behind the compaction boundary.
+type snapshotHolder struct {
+	snap *Snapshot
+}
+
+func (h *snapshotHolder) Snapshot() (Snapshot, error) {
+	if h.snap == nil {
+		return Snapshot{}, ErrUnavailable
+	}
+	return *h.snap, nil
+}
+
 // peer is one node plus the state its driver owns.
 type peer struct {
 	node    *Node
 	store   *memStorage
+	snaps   *snapshotHolder
 	applied []Entry
 	reads   []ReadState
 	down    bool
+}
+
+// encodeApplied serialises a state machine's contents for a snapshot payload. The
+// real store has its own encoding; the harness only needs something it can check
+// for equality after a restore.
+func encodeApplied(ents []Entry) []byte {
+	var b []byte
+	for _, e := range ents {
+		b = append(b, fmt.Sprintf("%d|%d|%d|%s\x00", e.Index, e.Term, e.Type, e.Data)...)
+	}
+	return b
+}
+
+func decodeApplied(data []byte) []Entry {
+	var out []Entry
+	for _, rec := range strings.Split(string(data), "\x00") {
+		if rec == "" {
+			continue
+		}
+		parts := strings.SplitN(rec, "|", 4)
+		if len(parts) != 4 {
+			continue
+		}
+		idx, _ := strconv.ParseUint(parts[0], 10, 64)
+		term, _ := strconv.ParseUint(parts[1], 10, 64)
+		typ, _ := strconv.ParseUint(parts[2], 10, 8)
+		out = append(out, Entry{
+			Index: Index(idx),
+			Term:  Term(term),
+			Type:  EntryType(typ),
+			Data:  []byte(parts[3]),
+		})
+	}
+	return out
 }
 
 // appliedData returns the payloads of applied normal entries, which is what a
@@ -140,11 +192,13 @@ func newCluster(t testing.TB, voters []NodeID, opts ...clusterOption) *cluster {
 			opt(&o)
 		}
 		o.Rand = c.rng.IntN
+		holder := &snapshotHolder{}
+		o.Snapshots = holder
 		node, err := NewNode(o)
 		if err != nil {
 			t.Fatalf("NewNode(%d): %v", id, err)
 		}
-		c.peers[id] = &peer{node: node, store: &memStorage{}}
+		c.peers[id] = &peer{node: node, store: &memStorage{}, snaps: holder}
 		c.ids = append(c.ids, id)
 	}
 	sort.Slice(c.ids, func(i, j int) bool { return c.ids[i] < c.ids[j] })
@@ -208,8 +262,10 @@ func (c *cluster) processReady(p *peer) {
 
 	if rd.Snapshot != nil {
 		// A restored snapshot replaces the state machine wholesale, so anything
-		// applied from the discarded log no longer describes current state.
-		p.applied = nil
+		// applied from the discarded log no longer describes current state — it is
+		// replaced by the snapshot's contents rather than merged with them.
+		p.applied = decodeApplied(rd.Snapshot.Data)
+		p.snaps.snap = rd.Snapshot
 	}
 	p.applied = append(p.applied, rd.Committed...)
 	p.reads = append(p.reads, rd.ReadStates...)
@@ -324,24 +380,87 @@ func (c *cluster) restart(id NodeID, opts ...clusterOption) {
 		opt(&o)
 	}
 	o.Rand = c.rng.IntN
+	holder := &snapshotHolder{snap: p.store.snapshot}
+	o.Snapshots = holder
 	node, err := NewNode(o)
 	if err != nil {
 		c.t.Fatalf("restart node %d: %v", id, err)
 	}
+
+	// Recovery order mirrors a real driver: restore the snapshot first to
+	// establish the compaction boundary, then replay the log that follows it,
+	// then apply the persisted term and vote.
+	p.applied = nil
 	if p.store.snapshot != nil {
 		if err := node.RestoreSnapshot(*p.store.snapshot); err != nil {
 			c.t.Fatalf("restart node %d: restore snapshot: %v", id, err)
 		}
+		p.applied = decodeApplied(p.store.snapshot.Data)
 	}
 	node.ReplayEntries(p.store.entries)
 	node.SetHardState(p.store.hardState)
 
 	p.node = node
+	p.snaps = holder
 	p.down = false
-	// Applied state is rebuilt by re-applying the recovered log, so it is
-	// cleared rather than carried across the restart.
-	p.applied = nil
 	p.reads = nil
+}
+
+// snapshotAndCompact has a node's state machine take a snapshot at its applied
+// index, persist it, and release the log prefix it covers.
+//
+// This is the driver's half of compaction: the state machine decides what its
+// contents are, and only then does the consensus core discard the entries that
+// produced them. Compacting first would risk losing entries the state machine had
+// not yet consumed.
+func (c *cluster) snapshotAndCompact(id NodeID) Snapshot {
+	c.t.Helper()
+	p := c.node(id)
+
+	applied := p.node.AppliedIndex()
+	if applied == 0 {
+		c.t.Fatalf("node %d has applied nothing to snapshot", id)
+	}
+	var term Term
+	for _, e := range p.applied {
+		if e.Index == applied {
+			term = e.Term
+		}
+	}
+	if term == 0 && p.snaps.snap != nil && p.snaps.snap.Index == applied {
+		term = p.snaps.snap.Term
+	}
+	if term == 0 {
+		c.t.Fatalf("node %d: cannot determine the term at applied index %d", id, applied)
+	}
+
+	snap := Snapshot{
+		Index: applied,
+		Term:  term,
+		Conf:  p.node.Membership(),
+		Data:  encodeApplied(p.applied),
+	}
+	p.snaps.snap = &snap
+	p.store.snapshot = &snap
+	// The persisted log is now redundant up to the boundary, which is what makes
+	// compaction reclaim anything at all.
+	p.store.entries = trimEntries(p.store.entries, applied)
+
+	if err := p.node.Compact(applied); err != nil {
+		c.t.Fatalf("node %d Compact(%d): %v", id, applied, err)
+	}
+	return snap
+}
+
+// trimEntries drops entries at or below index, mirroring what purging WAL
+// segments achieves on disk.
+func trimEntries(ents []Entry, index Index) []Entry {
+	for i, e := range ents {
+		if e.Index > index {
+			return append([]Entry(nil), ents[i:]...)
+		}
+	}
+	return nil
 }
 
 // leaders returns every node that currently believes it is leader.

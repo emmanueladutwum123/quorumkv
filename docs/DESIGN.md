@@ -266,7 +266,86 @@ lets the node re-apply to its state machine immediately rather than waiting.
 
 ---
 
-## 6. Membership
+## 6. Durable storage
+
+### 6.1 Record format
+
+Every WAL record is framed as `length (u32) | type (u8) | crc32c (u32) | payload`.
+
+The length comes first so a reader can establish whether a record is even
+complete before trusting anything else about it. The checksum covers the type
+byte as well as the payload, so a corrupted type cannot be reinterpreted as a
+valid record of some other kind. A length above 64 MiB is rejected before any
+allocation — otherwise a single corrupted byte in a length field becomes an
+out-of-memory crash rather than a checksum error.
+
+Payload encodings are hand-rolled rather than delegated to protobuf. A storage
+format that can shift when a dependency changes its encoding is a format that can
+one day fail to read back data written by an earlier build.
+
+### 6.2 Truncation without erasing
+
+The file format has no way to erase anything, yet a follower must sometimes
+discard a conflicting suffix. It does so by simply appending the leader's
+replacement entries at indexes that already appear in the file, and replay
+resolves the collision by index with **last-write-wins**.
+
+Keeping the write path purely append-only buys two things. Rewriting bytes in
+place is the operation most likely to leave a file half-updated after a crash;
+and an append-only file can be fsynced without any concern for the order in which
+earlier regions were modified.
+
+### 6.3 Torn tails versus corruption
+
+A crash mid-write leaves a partial record. That record can only ever be the last
+one, and because the write was never acknowledged, nothing above the WAL was ever
+told the data was durable. Replay therefore stops cleanly at the tear, discards
+it, and reports the recovered prefix — no error.
+
+The same damage in an *earlier* segment is a different thing entirely. A completed
+segment is followed by entries that depend on it, so silently truncating there
+would discard committed data. Corruption outside the final segment is reported as
+an error and the node refuses to start.
+
+The distinction is tested exhaustively rather than by example:
+`TestTruncationAtEveryOffsetRecoversAValidPrefix` truncates a written log at
+**every byte offset** and asserts that replay always succeeds, never panics, and
+always returns an exact prefix of what was written.
+
+Replay also rejects a gap in the recovered log. A hole means an entry was lost
+while its successors survived, which no later replication can repair safely.
+
+### 6.4 Ordering of durability barriers
+
+- `Append` does **not** fsync. A whole `Ready` batch is written and then `Sync` is
+  called once — one disk barrier per commit round instead of one per entry.
+- Within a batch, the hard state is framed before the entries it describes, so a
+  tear mid-batch loses entries rather than the vote that authorised them.
+- A newly created segment is followed by an fsync of the *directory*. Without it
+  the data could be durable while the name pointing at it is not.
+- Segment deletion after compaction also syncs the directory, so a crash cannot
+  resurrect a segment the snapshot has superseded.
+
+### 6.5 Snapshots are installed atomically
+
+A snapshot is written to a temporary name, fsynced, renamed into place, and the
+directory is then fsynced. Rename is atomic on POSIX filesystems, so a reader
+sees either the previous snapshot or the complete new one — never a partial file.
+Writing in place would open a window in which a crash destroys the only copy of
+the compacted prefix.
+
+Several generations are retained rather than only the newest. If the newest turns
+out to be unreadable, `Latest` falls back to an older one: a slower recovery from
+a valid snapshot is strictly better than refusing to start.
+
+### 6.6 Compaction ordering
+
+The state machine snapshots itself first; only then does the consensus core
+release the log prefix. Compacting first would risk discarding entries the state
+machine had not yet consumed, and nothing else holds a copy of their effects.
+`Compact` refuses any index above the applied index for exactly this reason.
+
+## 7. Membership
 
 `Config` holds up to two voter sets. `Voters[0]` is the incoming configuration
 and is always in force; `Voters[1]` is the outgoing configuration and is
@@ -287,7 +366,7 @@ commits entirely.
 
 ---
 
-## 7. Reads
+## 8. Reads
 
 Writes go through the log, so they are linearizable by construction. Reads have
 three options, and the cheap ones are subtly wrong:
@@ -308,7 +387,7 @@ knowingly.
 
 ---
 
-## 8. Exactly-once client semantics
+## 9. Exactly-once client semantics
 
 Raft guarantees a committed entry is applied *at least* once. It does not prevent
 a client from committing the same command twice: if a client's write succeeds but
@@ -326,7 +405,7 @@ requests it has already served.
 
 ---
 
-## 9. Failure modes
+## 10. Failure modes
 
 To be extended as the corresponding machinery lands (M4–M7). Currently
 documented: leader crash, follower crash, symmetric and asymmetric partitions,
