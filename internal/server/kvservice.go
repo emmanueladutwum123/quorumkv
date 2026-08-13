@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -55,8 +56,32 @@ func toStatus(err error) error {
 	case errors.Is(err, ErrStopped):
 		return status.Error(codes.Unavailable, err.Error())
 	default:
+		// A rejected membership change ("already in flight", "not a learner") is the
+		// caller's to fix, not an internal fault.
+		if isMembershipRejection(err) {
+			return status.Error(codes.FailedPrecondition, err.Error())
+		}
 		return status.Error(codes.Internal, err.Error())
 	}
+}
+
+// isMembershipRejection reports whether an error came from the consensus core
+// refusing a configuration change as impossible or premature.
+func isMembershipRejection(err error) bool {
+	msg := err.Error()
+	for _, marker := range []string{
+		"membership change is already in flight",
+		"membership change is proposed but not yet applied",
+		"is not a learner",
+		"is already a voter",
+		"no voters",
+		"leave-joint",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // withTimeout applies the node's request timeout when the caller supplied no
@@ -171,6 +196,53 @@ func (k *KVService) Get(ctx context.Context, r *kvv1.GetRequest) (*kvv1.GetRespo
 	// local read now reflects every write acknowledged before this call began.
 	value, found := k.srv.fsm.Get(r.GetKey())
 	return &kvv1.GetResponse{Value: value, Found: found, ReadIndex: uint64(readIndex)}, nil
+}
+
+// ChangeMembership adds, removes or promotes a cluster member.
+//
+// Adding a voter directly is allowed but discouraged, and the API makes the safer
+// path available: join as a learner, wait for it to catch up, then promote. A new
+// voter that is still transferring a snapshot counts toward quorum while being
+// unable to satisfy it, so in a three-node cluster adding a fourth voter raises
+// the requirement to three while leaving only three nodes able to meet it.
+func (k *KVService) ChangeMembership(ctx context.Context, r *kvv1.ChangeMembershipRequest) (*kvv1.ChangeMembershipResponse, error) {
+	if r.GetNodeId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "node id 0 is reserved")
+	}
+
+	var ccType raft.ConfChangeType
+	switch r.GetType() {
+	case kvv1.ConfChangeType_CONF_CHANGE_TYPE_ADD_VOTER:
+		ccType = raft.ConfChangeAddVoter
+	case kvv1.ConfChangeType_CONF_CHANGE_TYPE_ADD_LEARNER:
+		ccType = raft.ConfChangeAddLearner
+	case kvv1.ConfChangeType_CONF_CHANGE_TYPE_REMOVE_NODE:
+		ccType = raft.ConfChangeRemoveNode
+	case kvv1.ConfChangeType_CONF_CHANGE_TYPE_PROMOTE_LEARNER:
+		ccType = raft.ConfChangePromoteLearner
+	default:
+		return nil, status.Errorf(codes.InvalidArgument, "unsupported change type %s", r.GetType())
+	}
+
+	// An address is required for a node being added, since the cluster must be able
+	// to reach a member it learns about from the log rather than from its own
+	// static configuration.
+	if (ccType == raft.ConfChangeAddVoter || ccType == raft.ConfChangeAddLearner) && r.GetAddress() == "" {
+		return nil, status.Error(codes.InvalidArgument, "an address is required when adding a node")
+	}
+
+	ctx, cancel := k.withTimeout(ctx)
+	defer cancel()
+
+	index, err := k.srv.ChangeMembership(ctx, raft.ConfChange{
+		Type:    ccType,
+		NodeID:  raft.NodeID(r.GetNodeId()),
+		Context: []byte(r.GetAddress()),
+	})
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &kvv1.ChangeMembershipResponse{CommitIndex: uint64(index)}, nil
 }
 
 // Status reports this node's view of the cluster.

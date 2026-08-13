@@ -270,6 +270,22 @@ func (c *cluster) processReady(p *peer) {
 	p.applied = append(p.applied, rd.Committed...)
 	p.reads = append(p.reads, rd.ReadStates...)
 
+	// A membership change takes effect when it is applied, and every replica must
+	// apply it — the configuration is replicated state, so a node that skipped one
+	// would compute quorum against the wrong set.
+	for _, e := range rd.Committed {
+		if e.Type != EntryConfChange {
+			continue
+		}
+		cc, err := DecodeConfChange(e.Data)
+		if err != nil {
+			c.t.Fatalf("node %d: decode conf change at index %d: %v", p.node.ID(), e.Index, err)
+		}
+		if _, err := p.node.ApplyConfChange(cc); err != nil {
+			c.t.Fatalf("node %d: apply %s at index %d: %v", p.node.ID(), cc.Type, e.Index, err)
+		}
+	}
+
 	p.node.Advance(rd)
 }
 

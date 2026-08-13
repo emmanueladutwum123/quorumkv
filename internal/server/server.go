@@ -161,6 +161,7 @@ type Metrics struct {
 	RejectedReads    atomic.Uint64
 	Elections        atomic.Uint64
 	FsyncCount       atomic.Uint64
+	ConfChanges      atomic.Uint64
 }
 
 type stepRequest struct {
@@ -174,7 +175,11 @@ type stepRequest struct {
 type proposeRequest struct {
 	entryType raft.EntryType
 	data      []byte
-	replyCh   chan proposeResult
+	// conf is set for a membership change, which goes through the core's own
+	// validation rather than being appended as an opaque payload — that is what
+	// rejects an impossible change before it ever reaches the log.
+	conf    *raft.ConfChange
+	replyCh chan proposeResult
 }
 
 type proposeResult struct {
@@ -477,9 +482,22 @@ type replyCapture struct {
 }
 
 func (s *Server) handlePropose(req *proposeRequest) {
-	index, err := s.node.ProposeEntry(req.entryType, req.data)
+	var index raft.Index
+	var err error
+	if req.conf != nil {
+		index, err = s.node.ProposeConfChange(*req.conf)
+	} else {
+		index, err = s.node.ProposeEntry(req.entryType, req.data)
+	}
 	if err != nil {
-		req.replyCh <- proposeResult{err: s.notLeaderError()}
+		if errors.Is(err, raft.ErrProposalDropped) {
+			req.replyCh <- proposeResult{err: s.notLeaderError()}
+			return
+		}
+		// A rejected membership change carries a specific reason worth passing back
+		// verbatim: "already in flight" and "not a learner" call for different
+		// actions from the operator.
+		req.replyCh <- proposeResult{err: err}
 		return
 	}
 	s.metrics.Proposals.Add(1)
@@ -612,6 +630,12 @@ func (s *Server) applyEntries(ents []raft.Entry) error {
 		}
 		s.metrics.AppliedEntries.Add(1)
 
+		if e.Type == raft.EntryConfChange {
+			if err := s.applyConfChange(e); err != nil {
+				return err
+			}
+		}
+
 		waiter, ok := s.proposals[e.Index]
 		if !ok {
 			continue
@@ -625,6 +649,47 @@ func (s *Server) applyEntries(ents []raft.Entry) error {
 			continue
 		}
 		waiter.replyCh <- proposeResult{index: e.Index, result: result}
+	}
+	return nil
+}
+
+// applyConfChange installs a membership change and reconciles the transport with
+// the new configuration.
+//
+// Every replica must apply every such entry: the configuration is replicated
+// state, so a node that skipped one would compute quorum against the wrong set
+// and could help elect a second leader.
+func (s *Server) applyConfChange(e raft.Entry) error {
+	cc, err := raft.DecodeConfChange(e.Data)
+	if err != nil {
+		// An undecodable change would leave this replica's configuration different
+		// from everyone else's, which is not something to continue past.
+		return fmt.Errorf("server: decode conf change at index %d: %w", e.Index, err)
+	}
+
+	cfg, err := s.node.ApplyConfChange(cc)
+	if err != nil {
+		return fmt.Errorf("server: apply conf change at index %d: %w", e.Index, err)
+	}
+	s.metrics.ConfChanges.Add(1)
+
+	// A node learns how to reach a new member from the change itself, which is why
+	// the address travels in the log: after a restart, the recovered configuration
+	// would otherwise contain ids with no known address.
+	if len(cc.Context) > 0 && cc.NodeID != s.cfg.NodeID {
+		addr := string(cc.Context)
+		s.addrMu.Lock()
+		s.peerAddrs[cc.NodeID] = addr
+		s.addrMu.Unlock()
+		if cfg.Contains(cc.NodeID) {
+			s.tr.AddPeer(cc.NodeID, addr)
+		}
+	}
+
+	if !cfg.Contains(cc.NodeID) && cc.NodeID != s.cfg.NodeID {
+		// Drop the connection to a node that is no longer a member, so a removed
+		// node cannot keep receiving entries it has no business seeing.
+		s.tr.RemovePeer(cc.NodeID)
 	}
 	return nil
 }
@@ -791,6 +856,28 @@ func (s *Server) propose(ctx context.Context, t raft.EntryType, data []byte) (ra
 		return 0, nil, ErrTimeout
 	case <-s.stopCh:
 		return 0, nil, ErrStopped
+	}
+}
+
+// ChangeMembership proposes a membership change and waits for it to be applied.
+func (s *Server) ChangeMembership(ctx context.Context, cc raft.ConfChange) (raft.Index, error) {
+	req := &proposeRequest{entryType: raft.EntryConfChange, conf: &cc, replyCh: make(chan proposeResult, 1)}
+
+	select {
+	case s.proposeCh <- req:
+	case <-ctx.Done():
+		return 0, ErrTimeout
+	case <-s.stopCh:
+		return 0, ErrStopped
+	}
+
+	select {
+	case res := <-req.replyCh:
+		return res.index, res.err
+	case <-ctx.Done():
+		return 0, ErrTimeout
+	case <-s.stopCh:
+		return 0, ErrStopped
 	}
 }
 

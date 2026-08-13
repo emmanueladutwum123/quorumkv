@@ -184,6 +184,12 @@ type Node struct {
 	// persist and hand to the state machine.
 	pendingSnapshot *Snapshot
 
+	// pendingConfIndex is the index of the most recently proposed membership
+	// change. While it exceeds the applied index, the configuration that change
+	// produces is unknown, so no further change may be validated against the
+	// current one.
+	pendingConfIndex Index
+
 	// prevHardState and prevSoftState let Ready report only what changed,
 	// so an idle node produces empty batches and no disk writes.
 	prevHardState HardState
@@ -590,6 +596,12 @@ func (n *Node) becomeLeader() {
 		pr.Next = n.log.lastIndex() + 1
 	}
 
+	// A new leader may hold uncommitted configuration changes from a previous
+	// term. Until everything already in the log is applied, it cannot know which
+	// configuration it is really operating under, so no new change is accepted
+	// until then.
+	n.pendingConfIndex = n.log.lastIndex()
+
 	// Commit a blank entry of the new term (§5.4.2). A leader may not conclude
 	// that an entry from an earlier term is committed merely because it is now
 	// on a majority — Figure 8 of the paper shows such an entry can still be
@@ -632,11 +644,6 @@ func (n *Node) ProposeEntry(t EntryType, data []byte) (Index, error) {
 // before reporting success to a client.
 func (n *Node) Propose(data []byte) (Index, error) {
 	return n.appendEntry(EntryNormal, data)
-}
-
-// ProposeConfChange appends a membership change to the log.
-func (n *Node) ProposeConfChange(data []byte) (Index, error) {
-	return n.appendEntry(EntryConfChange, data)
 }
 
 func (n *Node) appendEntry(t EntryType, data []byte) (Index, error) {

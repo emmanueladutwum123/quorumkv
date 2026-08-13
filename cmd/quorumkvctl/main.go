@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +37,10 @@ Commands:
   cas <key> <expected> <new>        replace a value only if it matches
   create <key> <value>              store a value only if the key is absent
   status                            report cluster state
+  member add-learner <id> <addr>    add a non-voting member (safe way to grow)
+  member promote <id>               promote a caught-up learner to a voter
+  member add <id> <addr>            add a voter directly (raises quorum at once)
+  member remove <id>                remove a member
 
 Flags:
   -endpoints   comma-separated node addresses (default 127.0.0.1:9000)
@@ -125,9 +130,94 @@ func (c *client) run(args []string, stale bool) error {
 		return c.cas(rest[0], "", rest[1], true)
 	case "status":
 		return c.status()
+	case "member":
+		return c.member(rest)
 	default:
 		return fmt.Errorf("unknown command %q", cmd)
 	}
+}
+
+// member runs a membership subcommand.
+func (c *client) member(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: member <add-learner|promote|add|remove> ...")
+	}
+	sub, rest := args[0], args[1:]
+
+	parseID := func(s string) (uint64, error) {
+		id, err := strconv.ParseUint(s, 10, 64)
+		if err != nil || id == 0 {
+			return 0, fmt.Errorf("invalid node id %q", s)
+		}
+		return id, nil
+	}
+
+	var (
+		ccType kvv1.ConfChangeType
+		id     uint64
+		addr   string
+		err    error
+	)
+
+	switch sub {
+	case "add-learner":
+		if len(rest) != 2 {
+			return errors.New("usage: member add-learner <id> <address>")
+		}
+		ccType = kvv1.ConfChangeType_CONF_CHANGE_TYPE_ADD_LEARNER
+		if id, err = parseID(rest[0]); err != nil {
+			return err
+		}
+		addr = rest[1]
+
+	case "promote":
+		if len(rest) != 1 {
+			return errors.New("usage: member promote <id>")
+		}
+		ccType = kvv1.ConfChangeType_CONF_CHANGE_TYPE_PROMOTE_LEARNER
+		if id, err = parseID(rest[0]); err != nil {
+			return err
+		}
+
+	case "add":
+		if len(rest) != 2 {
+			return errors.New("usage: member add <id> <address>")
+		}
+		ccType = kvv1.ConfChangeType_CONF_CHANGE_TYPE_ADD_VOTER
+		if id, err = parseID(rest[0]); err != nil {
+			return err
+		}
+		addr = rest[1]
+		// Adding a voter directly raises the quorum requirement immediately, while
+		// the new member may still be transferring a snapshot and unable to help
+		// meet it. The two-step path avoids that window entirely.
+		fmt.Fprintln(os.Stderr,
+			"warning: adding a voter directly raises the quorum requirement before the new\n"+
+				"         node has caught up. Prefer: member add-learner, wait, member promote.")
+
+	case "remove":
+		if len(rest) != 1 {
+			return errors.New("usage: member remove <id>")
+		}
+		ccType = kvv1.ConfChangeType_CONF_CHANGE_TYPE_REMOVE_NODE
+		if id, err = parseID(rest[0]); err != nil {
+			return err
+		}
+
+	default:
+		return fmt.Errorf("unknown member subcommand %q", sub)
+	}
+
+	resp, err := call(c, func(ctx context.Context, kv kvv1.KVServiceClient) (*kvv1.ChangeMembershipResponse, error) {
+		return kv.ChangeMembership(ctx, &kvv1.ChangeMembershipRequest{
+			Type: ccType, NodeId: id, Address: addr,
+		})
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("membership change committed at index %d\n", resp.GetCommitIndex())
+	return nil
 }
 
 func (c *client) header() *kvv1.RequestHeader {

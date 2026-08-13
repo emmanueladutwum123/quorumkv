@@ -85,8 +85,8 @@ passes its tests, and leaves the repository in a presentable state.
 | M3 | Log replication, commit advancement, log repair, §5.4 safety rules | ✅ done |
 | M4 | Crash-safe WAL, atomic snapshots, log compaction | ✅ done |
 | M5 | gRPC transport, KV API, linearizable reads, CLI | ✅ done |
-| M6 | Joint-consensus membership changes, learners | in progress |
-| M7 | Deterministic fault injection, linearizability checker | planned |
+| M6 | Joint-consensus membership changes, learners | ✅ done |
+| M7 | Deterministic fault injection, linearizability checker | in progress |
 | M8 | Metrics, benchmarks, Docker cluster, CI, design docs | planned |
 
 ## Quickstart
@@ -143,6 +143,38 @@ quorumkvctl del <key>
 
 `create` and `cas` exit non-zero when the condition fails, so they compose in
 scripts as the coordination primitive they are.
+
+### Growing and shrinking the cluster
+
+Add a member the safe way — as a non-voting learner first, promoted once it has
+caught up:
+
+```console
+$ quorumkvd -id 4 -addr 127.0.0.1:9404 -data-dir /tmp/qkv/n4 \
+    -peers "$PEERS,4=127.0.0.1:9404" -learner &
+
+$ quorumkvctl -endpoints $EP member add-learner 4 127.0.0.1:9404
+membership change committed at index 3
+
+$ quorumkvctl -endpoints $EP member promote 4
+membership change committed at index 4
+
+$ quorumkvctl -endpoints $EP status
+127.0.0.1:9403  node=3 role=leader    term=1 leader=3 commit=5 applied=5 last=5
+    peer 1  voter   match=5        up       127.0.0.1:9401
+    peer 2  voter   match=5        up       127.0.0.1:9402
+    peer 3  voter   match=5        self     127.0.0.1:9403
+    peer 4  voter   match=5        up       127.0.0.1:9404
+```
+
+Note the term: still 1. Growing from three voters to four caused **no election**
+and no interruption to writes.
+
+`member add` exists too, and warns. Adding a voter directly raises the quorum
+requirement the moment it commits, while the new node may still be transferring a
+snapshot and unable to help meet it — in a three-node cluster that means a
+requirement of three against three nodes able to satisfy it, so one further
+failure stalls commits entirely.
 
 ## Build and test
 
