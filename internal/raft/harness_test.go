@@ -86,6 +86,17 @@ type cluster struct {
 	// dropped counts messages discarded by the network, for assertions about
 	// whether a scenario actually exercised a partition.
 	dropped int
+	// sent counts messages by type, which lets tests assert on protocol cost —
+	// for instance that log repair takes a number of round trips proportional to
+	// conflicting terms rather than conflicting entries.
+	sent map[MessageType]int
+}
+
+// resetCounters zeroes the message accounting, so a test can measure the cost of
+// one phase without the election that preceded it.
+func (c *cluster) resetCounters() {
+	c.sent = make(map[MessageType]int)
+	c.dropped = 0
 }
 
 type clusterOption func(*Options)
@@ -119,7 +130,8 @@ func newCluster(t testing.TB, voters []NodeID, opts ...clusterOption) *cluster {
 		// A fixed seed keeps every run identical. Tests that want to explore
 		// many interleavings vary the seed explicitly rather than relying on
 		// ambient randomness.
-		rng: rand.New(rand.NewPCG(0x5eed, 0xc0ffee)),
+		rng:  rand.New(rand.NewPCG(0x5eed, 0xc0ffee)),
+		sent: make(map[MessageType]int),
 	}
 	cfg := NewConfig(voters...)
 	for _, id := range cfg.Members() {
@@ -206,6 +218,7 @@ func (c *cluster) processReady(p *peer) {
 }
 
 func (c *cluster) send(m Message) {
+	c.sent[m.Type]++
 	if c.blocked(m.From, m.To) {
 		c.dropped++
 		return

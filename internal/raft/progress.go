@@ -57,9 +57,18 @@ type progress struct {
 	// PendingSnapshot is the snapshot index being transferred in stateSnapshot.
 	PendingSnapshot Index
 
-	// MsgsSinceAck is set while a probe is outstanding, suppressing further
-	// sends until the peer replies or a heartbeat interval elapses.
+	// ProbeSent is set while a probe is outstanding, suppressing further sends
+	// until the peer replies or a heartbeat interval elapses.
 	ProbeSent bool
+
+	// StalledIntervals counts consecutive heartbeat intervals in which this peer
+	// had everything sent to it but has acknowledged none of it.
+	//
+	// That state is ambiguous: the entries may simply be in flight, or they may
+	// have been dropped and will never arrive. Waiting a couple of intervals
+	// before assuming loss avoids mistaking ordinary pipelining for failure,
+	// while still recovering without waiting for an election timeout.
+	StalledIntervals int
 
 	// RecentActive reports whether the peer has responded since the last
 	// quorum check. It backs the leader's self-check: a leader that cannot
@@ -124,6 +133,8 @@ func (pr *progress) maybeUpdate(i Index) bool {
 		pr.Match = i
 		updated = true
 		pr.ProbeSent = false
+		// Forward progress clears any suspicion that the stream is stuck.
+		pr.StalledIntervals = 0
 	}
 	if pr.Next < i+1 {
 		pr.Next = i + 1

@@ -82,8 +82,8 @@ passes its tests, and leaves the repository in a presentable state.
 |---|---|---|
 | M1 | Module layout, RPC contracts, log and membership data structures | ✅ done |
 | M2 | Raft core state machine, leader election, pre-vote, check-quorum, ReadIndex | ✅ done |
-| M3 | Log replication under failure, log repair, snapshot fallback | in progress |
-| M4 | Crash-safe WAL, snapshots, log compaction | planned |
+| M3 | Log replication, commit advancement, log repair, §5.4 safety rules | ✅ done |
+| M4 | Crash-safe WAL, snapshots, log compaction | in progress |
 | M5 | gRPC transport, KV API, linearizable reads, CLI | planned |
 | M6 | Joint-consensus membership changes, learners | planned |
 | M7 | Deterministic fault injection, linearizability checker | planned |

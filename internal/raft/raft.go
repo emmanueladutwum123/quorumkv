@@ -833,10 +833,15 @@ func (n *Node) stepLeader(m Message) {
 				// Tell followers about the new commit index promptly, so their
 				// state machines advance without waiting for a heartbeat.
 				n.bcastAppend()
-			} else {
-				// Keep feeding a follower that is still catching up.
-				n.sendAppend(m.From)
+				return
 			}
+		}
+		// Keep feeding a follower that still has entries owing. This is checked
+		// even when Match did not advance, because a heartbeat acknowledgement
+		// carries no new index yet still tells the leader the peer is reachable
+		// and may have entries outstanding.
+		if pr.Next <= n.log.lastIndex() {
+			n.sendAppend(m.From)
 		}
 
 	case MsgSnapResp:
@@ -864,8 +869,22 @@ func (n *Node) stepLeader(m Message) {
 }
 
 func (n *Node) handleAppendRejection(m Message, pr *progress) {
+	// The follower reported where its own log diverges. The leader now walks
+	// back over its *own* entries whose term exceeds the follower's at that
+	// point, because none of them can possibly match.
+	//
+	// Both halves of this walk are needed. The follower's hint skips its
+	// conflicting suffix; the leader's walk skips the run of its own entries
+	// that could never match it. Together they cost one round trip per
+	// conflicting term. Either half alone degrades to one round trip per
+	// conflicting entry, which after a long partition is thousands.
+	nextProbe := m.HintIndex
+	if m.HintTerm > 0 {
+		nextProbe, _ = n.log.findConflictByTerm(m.HintIndex, m.HintTerm)
+	}
+
 	// MatchIndex on a rejection carries the index that was refused.
-	if !pr.maybeDecrTo(m.MatchIndex, m.HintIndex) {
+	if !pr.maybeDecrTo(m.MatchIndex, nextProbe) {
 		// A stale or duplicated rejection: acting on it would walk Next
 		// backwards for no reason and slow the repair down.
 		return
@@ -1112,9 +1131,48 @@ func (n *Node) bcastHeartbeatWithCtx(ctx []byte) {
 		if pr == nil {
 			continue
 		}
+		// A probe may have been lost in the network. Clearing the suppression
+		// each interval retries it, rather than stalling replication to this
+		// peer until an election timeout.
 		pr.ProbeSent = false
 		n.sendHeartbeat(id, pr, ctx)
+		n.nudgeIfStalled(id, pr)
 	}
+}
+
+// nudgeIfStalled recovers a replication stream whose in-flight entries were
+// silently dropped.
+//
+// A streaming peer advances Next optimistically on send, so if those messages
+// are lost, the leader has nothing left to send and the peer never acknowledges:
+// replication to it wedges until an election intervenes. The ambiguous state —
+// everything sent, nothing acknowledged — is also what ordinary pipelining looks
+// like, so it is only treated as loss after a couple of quiet intervals.
+//
+// Recovery deliberately rewinds to Match+1 rather than retrying at Next-1. The
+// follower is known to hold Match, so the retry passes its consistency check on
+// the first attempt and carries real entries with it. Retrying at Next-1 would
+// anchor on an entry the follower may never have received, and the resulting
+// rejection would drop a healthy stream into probing for no reason.
+func (n *Node) nudgeIfStalled(to NodeID, pr *progress) {
+	if pr.State != stateReplicate || pr.Match >= n.log.lastIndex() {
+		pr.StalledIntervals = 0
+		return
+	}
+	if pr.Next <= n.log.lastIndex() {
+		// There are still entries this peer has never been sent, so the normal
+		// path will deliver them; nothing is stuck.
+		pr.StalledIntervals = 0
+		n.sendAppend(to)
+		return
+	}
+	pr.StalledIntervals++
+	if pr.StalledIntervals < 2 {
+		return
+	}
+	pr.StalledIntervals = 0
+	pr.becomeProbe()
+	n.sendAppend(to)
 }
 
 // sendHeartbeat sends an empty AppendEntries anchored at the follower's

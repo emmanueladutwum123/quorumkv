@@ -119,18 +119,65 @@ The cost surfaces on restart, where the whole retained log must be replayed from
 the WAL into memory before the node can participate. That is bounded by the same
 threshold.
 
-### 3.3 Divergence hints
+### 3.3 Divergence hints: a two-sided walk
 
 When a follower rejects an `AppendEntries` because its log diverges, the textbook
 response is for the leader to decrement `nextIndex` and retry — one round trip
 per conflicting entry. After a long partition that is thousands of round trips
 before a node can catch up.
 
-Instead the rejecting follower reports where its log actually diverges
-(`HintIndex`, `HintTerm`), which lets the leader skip an entire conflicting term
-per round trip. Repair cost becomes proportional to the number of conflicting
-*terms*, which is small in practice even when the number of conflicting entries
-is large.
+Repair here is proportional to conflicting *terms* instead, and it takes both
+halves of a two-sided walk to get there:
+
+1. **The follower's half.** On rejection it walks back to the highest position
+   where its own term is no greater than the probed term, and reports that
+   `(HintIndex, HintTerm)`. This skips its own conflicting suffix.
+2. **The leader's half.** On receiving the hint, the leader walks back over its
+   *own* entries whose term exceeds `HintTerm`, since none of them can possibly
+   match a follower sitting at that term.
+
+Either half alone still degrades to roughly one round trip per entry. Together,
+the measured cost of reconciling 200 conflicting entries across two terms is
+**5 round trips** (`TestRepairSkipsWholeConflictingTermPerRoundTrip`), and the
+test fails if it exceeds 15 — so the property is pinned, not merely intended.
+
+### 3.4 Recovering a stalled replication stream
+
+A streaming peer has its `Next` advanced optimistically on send, which is what
+makes pipelining possible. It also creates a failure mode that is easy to miss:
+if those in-flight messages are dropped, the leader has nothing left to send and
+the follower has nothing to acknowledge. Replication to that peer wedges until an
+election intervenes.
+
+The difficulty is that the wedged state — everything sent, nothing acknowledged —
+is indistinguishable from healthy pipelining at any single instant. So it is
+treated as loss only after two consecutive quiet heartbeat intervals.
+
+Recovery rewinds to `Match + 1`, not to `Next - 1`. The follower is known to hold
+`Match`, so the retry passes the consistency check on its first attempt and
+carries real entries with it. Retrying at `Next - 1` would anchor on an entry the
+follower may never have received, and the resulting rejection would drop a
+perfectly healthy stream into probing for no reason.
+
+The same reasoning explains why heartbeats are anchored at `Match` rather than
+`Next - 1` (§3.5).
+
+### 3.5 Heartbeats anchored at Match
+
+Heartbeats are empty `AppendEntries`. The natural anchor would be `Next - 1`, but
+under load `Next` runs ahead of what the follower has acknowledged, so such a
+heartbeat fails the consistency check whenever entries are in flight. Every
+heartbeat would become a spurious rejection, knocking replication back into
+probing precisely when the cluster is busiest.
+
+Anchoring at `Match` avoids this entirely: that entry is by definition already on
+the follower, so the check always passes and the heartbeat does its real job —
+proving leadership and carrying the commit index forward. The advertised commit
+index is capped at `Match`, since a follower may only commit what it actually
+holds.
+
+This also keeps the peer RPC surface at the paper's three calls, with no separate
+heartbeat message type.
 
 ### 3.4 Truncation rewinds durability
 
