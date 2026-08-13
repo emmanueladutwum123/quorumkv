@@ -300,8 +300,13 @@ type VoteRequest struct {
 	CandidateId uint64                 `protobuf:"varint,2,opt,name=candidate_id,json=candidateId,proto3" json:"candidate_id,omitempty"`
 	// The candidate's last log entry, compared against the voter's own by the
 	// §5.4.1 election restriction.
-	LastLogIndex  uint64 `protobuf:"varint,3,opt,name=last_log_index,json=lastLogIndex,proto3" json:"last_log_index,omitempty"`
-	LastLogTerm   uint64 `protobuf:"varint,4,opt,name=last_log_term,json=lastLogTerm,proto3" json:"last_log_term,omitempty"`
+	LastLogIndex uint64 `protobuf:"varint,3,opt,name=last_log_index,json=lastLogIndex,proto3" json:"last_log_index,omitempty"`
+	LastLogTerm  uint64 `protobuf:"varint,4,opt,name=last_log_term,json=lastLogTerm,proto3" json:"last_log_term,omitempty"`
+	// A pre-vote is a straw poll (§9.6): term carries the term the candidate
+	// *would* move to, while the candidate stays behind. Recipients answer
+	// without adopting that term or stepping down, so a partitioned node cannot
+	// disrupt a healthy cluster by repeatedly timing out.
+	PreVote       bool `protobuf:"varint,5,opt,name=pre_vote,json=preVote,proto3" json:"pre_vote,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -364,11 +369,22 @@ func (x *VoteRequest) GetLastLogTerm() uint64 {
 	return 0
 }
 
+func (x *VoteRequest) GetPreVote() bool {
+	if x != nil {
+		return x.PreVote
+	}
+	return false
+}
+
 type VoteResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Term          uint64                 `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
-	VoterId       uint64                 `protobuf:"varint,2,opt,name=voter_id,json=voterId,proto3" json:"voter_id,omitempty"`
-	Granted       bool                   `protobuf:"varint,3,opt,name=granted,proto3" json:"granted,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Term    uint64                 `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
+	VoterId uint64                 `protobuf:"varint,2,opt,name=voter_id,json=voterId,proto3" json:"voter_id,omitempty"`
+	Granted bool                   `protobuf:"varint,3,opt,name=granted,proto3" json:"granted,omitempty"`
+	// Echoes the request's pre_vote so a straw-poll reply is never mistaken for a
+	// real vote. A granted pre-vote carries a term above the responder's own and
+	// must not cause the candidate to step down.
+	PreVote       bool `protobuf:"varint,4,opt,name=pre_vote,json=preVote,proto3" json:"pre_vote,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -420,6 +436,13 @@ func (x *VoteResponse) GetVoterId() uint64 {
 func (x *VoteResponse) GetGranted() bool {
 	if x != nil {
 		return x.Granted
+	}
+	return false
+}
+
+func (x *VoteResponse) GetPreVote() bool {
+	if x != nil {
+		return x.PreVote
 	}
 	return false
 }
@@ -842,16 +865,18 @@ const file_proto_raft_v1_raft_proto_rawDesc = "" +
 	"\x05index\x18\x01 \x01(\x04R\x05index\x12\x12\n" +
 	"\x04term\x18\x02 \x01(\x04R\x04term\x12,\n" +
 	"\x04conf\x18\x03 \x01(\v2\x18.quorumkv.raft.v1.ConfigR\x04conf\x12\x12\n" +
-	"\x04data\x18\x04 \x01(\fR\x04data\"\x8e\x01\n" +
+	"\x04data\x18\x04 \x01(\fR\x04data\"\xa9\x01\n" +
 	"\vVoteRequest\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x04R\x04term\x12!\n" +
 	"\fcandidate_id\x18\x02 \x01(\x04R\vcandidateId\x12$\n" +
 	"\x0elast_log_index\x18\x03 \x01(\x04R\flastLogIndex\x12\"\n" +
-	"\rlast_log_term\x18\x04 \x01(\x04R\vlastLogTerm\"W\n" +
+	"\rlast_log_term\x18\x04 \x01(\x04R\vlastLogTerm\x12\x19\n" +
+	"\bpre_vote\x18\x05 \x01(\bR\apreVote\"r\n" +
 	"\fVoteResponse\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x04R\x04term\x12\x19\n" +
 	"\bvoter_id\x18\x02 \x01(\x04R\avoterId\x12\x18\n" +
-	"\agranted\x18\x03 \x01(\bR\agranted\"\xe2\x01\n" +
+	"\agranted\x18\x03 \x01(\bR\agranted\x12\x19\n" +
+	"\bpre_vote\x18\x04 \x01(\bR\apreVote\"\xe2\x01\n" +
 	"\rAppendRequest\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x04R\x04term\x12\x1b\n" +
 	"\tleader_id\x18\x02 \x01(\x04R\bleaderId\x12$\n" +

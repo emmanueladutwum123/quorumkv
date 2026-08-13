@@ -41,6 +41,16 @@ type Role uint8
 const (
 	// Follower accepts entries from a leader and votes at most once per term.
 	Follower Role = iota
+	// PreCandidate is soliciting votes for an election it has not yet started
+	// (§9.6). It has not incremented its term and will not do so unless the
+	// straw poll succeeds.
+	//
+	// This exists to stop a node that has been partitioned away from disrupting
+	// a healthy cluster. Such a node's election timer fires repeatedly, and
+	// without a pre-vote phase each attempt raises its term; when the partition
+	// heals, that inflated term forces the sitting leader to step down and the
+	// cluster to hold a needless election, even though nothing was wrong.
+	PreCandidate
 	// Candidate is soliciting votes for its own election.
 	Candidate
 	// Leader is the single node in a term permitted to append client entries.
@@ -51,6 +61,8 @@ func (r Role) String() string {
 	switch r {
 	case Follower:
 		return "follower"
+	case PreCandidate:
+		return "precandidate"
 	case Candidate:
 		return "candidate"
 	case Leader:
@@ -206,6 +218,12 @@ type Message struct {
 	// restriction.
 	LastLogIndex Index
 	LastLogTerm  Term
+	// PreVote marks a vote exchange as a straw poll (MsgVote*). A pre-vote
+	// request carries the term the candidate *would* move to, while the
+	// candidate itself stays behind; recipients answer it without adopting that
+	// term or stepping down, which is what keeps a partitioned node from
+	// disrupting a working cluster.
+	PreVote bool
 
 	// PrevLogIndex and PrevLogTerm form the AppendEntries consistency check
 	// (MsgAppReq): the follower accepts Entries only if it holds a matching

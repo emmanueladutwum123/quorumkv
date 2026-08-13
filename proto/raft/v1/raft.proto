@@ -62,12 +62,21 @@ message VoteRequest {
   // §5.4.1 election restriction.
   uint64 last_log_index = 3;
   uint64 last_log_term = 4;
+  // A pre-vote is a straw poll (§9.6): term carries the term the candidate
+  // *would* move to, while the candidate stays behind. Recipients answer
+  // without adopting that term or stepping down, so a partitioned node cannot
+  // disrupt a healthy cluster by repeatedly timing out.
+  bool pre_vote = 5;
 }
 
 message VoteResponse {
   uint64 term = 1;
   uint64 voter_id = 2;
   bool granted = 3;
+  // Echoes the request's pre_vote so a straw-poll reply is never mistaken for a
+  // real vote. A granted pre-vote carries a term above the responder's own and
+  // must not cause the candidate to step down.
+  bool pre_vote = 4;
 }
 
 // AppendRequest is AppendEntries (Raft §5.3). With no entries it serves as the

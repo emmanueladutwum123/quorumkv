@@ -81,8 +81,8 @@ passes its tests, and leaves the repository in a presentable state.
 | Milestone | Scope | State |
 |---|---|---|
 | M1 | Module layout, RPC contracts, log and membership data structures | ✅ done |
-| M2 | Raft core state machine, leader election | in progress |
-| M3 | Log replication, commit advancement, §5.4 safety rules | planned |
+| M2 | Raft core state machine, leader election, pre-vote, check-quorum, ReadIndex | ✅ done |
+| M3 | Log replication under failure, log repair, snapshot fallback | in progress |
 | M4 | Crash-safe WAL, snapshots, log compaction | planned |
 | M5 | gRPC transport, KV API, linearizable reads, CLI | planned |
 | M6 | Joint-consensus membership changes, learners | planned |
