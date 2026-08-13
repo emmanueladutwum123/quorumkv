@@ -605,6 +605,24 @@ func (n *Node) becomeLeader() {
 // Proposals
 // ---------------------------------------------------------------------------
 
+// TermAt returns the term of the entry at index i.
+//
+// A driver needs this to label a snapshot: the snapshot's term must match the
+// entry it replaces, or the boundary can no longer answer a leader's consistency
+// check.
+func (n *Node) TermAt(i Index) (Term, error) { return n.log.term(i) }
+
+// ProposeEntry appends an entry of the given type. It exists so a driver can
+// route both client commands and configuration changes through one path.
+func (n *Node) ProposeEntry(t EntryType, data []byte) (Index, error) {
+	switch t {
+	case EntryNormal, EntryConfChange:
+		return n.appendEntry(t, data)
+	default:
+		return 0, fmt.Errorf("raft: %s entries are not proposable", t)
+	}
+}
+
 // Propose appends a client command to the log and starts replicating it,
 // returning the index it will occupy once committed.
 //
@@ -1396,6 +1414,20 @@ func (n *Node) Compact(i Index) error {
 	return n.log.compact(i)
 }
 
+// PeerProgress is a leader's view of one peer's replication state, exported for
+// operator tooling and metrics.
+type PeerProgress struct {
+	// Match is the highest index known to be replicated on this peer.
+	Match Index
+	// Next is the next index the leader will send.
+	Next Index
+	// State is "probe", "replicate" or "snapshot".
+	State string
+	// RecentActive reports whether the peer answered within the last quorum check.
+	RecentActive bool
+	IsLearner    bool
+}
+
 // Status is a point-in-time description of the node, for operators and metrics.
 type Status struct {
 	ID       NodeID
@@ -1407,7 +1439,8 @@ type Status struct {
 	LastLog  Index
 	Snapshot Index
 	Config   Config
-	Progress map[NodeID]progress
+	// Progress is populated only on a leader, since no other role tracks it.
+	Progress map[NodeID]PeerProgress
 }
 
 // Status returns a snapshot of the node's state. Progress is populated only on
@@ -1425,9 +1458,15 @@ func (n *Node) Status() Status {
 		Config:   n.cfg.Clone(),
 	}
 	if n.role == Leader {
-		s.Progress = make(map[NodeID]progress, len(n.progress))
+		s.Progress = make(map[NodeID]PeerProgress, len(n.progress))
 		for id, pr := range n.progress {
-			s.Progress[id] = *pr
+			s.Progress[id] = PeerProgress{
+				Match:        pr.Match,
+				Next:         pr.Next,
+				State:        pr.State.String(),
+				RecentActive: pr.RecentActive,
+				IsLearner:    pr.IsLearner,
+			}
 		}
 	}
 	return s

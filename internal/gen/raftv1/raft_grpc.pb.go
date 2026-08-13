@@ -31,6 +31,7 @@ const (
 	RaftService_AppendEntries_FullMethodName   = "/quorumkv.raft.v1.RaftService/AppendEntries"
 	RaftService_InstallSnapshot_FullMethodName = "/quorumkv.raft.v1.RaftService/InstallSnapshot"
 	RaftService_TimeoutNow_FullMethodName      = "/quorumkv.raft.v1.RaftService/TimeoutNow"
+	RaftService_ReadIndex_FullMethodName       = "/quorumkv.raft.v1.RaftService/ReadIndex"
 )
 
 // RaftServiceClient is the client API for RaftService service.
@@ -44,6 +45,7 @@ type RaftServiceClient interface {
 	AppendEntries(ctx context.Context, in *AppendRequest, opts ...grpc.CallOption) (*AppendResponse, error)
 	InstallSnapshot(ctx context.Context, in *SnapshotRequest, opts ...grpc.CallOption) (*SnapshotResponse, error)
 	TimeoutNow(ctx context.Context, in *TimeoutNowRequest, opts ...grpc.CallOption) (*TimeoutNowResponse, error)
+	ReadIndex(ctx context.Context, in *ReadIndexRequest, opts ...grpc.CallOption) (*ReadIndexResponse, error)
 }
 
 type raftServiceClient struct {
@@ -94,6 +96,16 @@ func (c *raftServiceClient) TimeoutNow(ctx context.Context, in *TimeoutNowReques
 	return out, nil
 }
 
+func (c *raftServiceClient) ReadIndex(ctx context.Context, in *ReadIndexRequest, opts ...grpc.CallOption) (*ReadIndexResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReadIndexResponse)
+	err := c.cc.Invoke(ctx, RaftService_ReadIndex_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RaftServiceServer is the server API for RaftService service.
 // All implementations must embed UnimplementedRaftServiceServer
 // for forward compatibility.
@@ -105,6 +117,7 @@ type RaftServiceServer interface {
 	AppendEntries(context.Context, *AppendRequest) (*AppendResponse, error)
 	InstallSnapshot(context.Context, *SnapshotRequest) (*SnapshotResponse, error)
 	TimeoutNow(context.Context, *TimeoutNowRequest) (*TimeoutNowResponse, error)
+	ReadIndex(context.Context, *ReadIndexRequest) (*ReadIndexResponse, error)
 	mustEmbedUnimplementedRaftServiceServer()
 }
 
@@ -126,6 +139,9 @@ func (UnimplementedRaftServiceServer) InstallSnapshot(context.Context, *Snapshot
 }
 func (UnimplementedRaftServiceServer) TimeoutNow(context.Context, *TimeoutNowRequest) (*TimeoutNowResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method TimeoutNow not implemented")
+}
+func (UnimplementedRaftServiceServer) ReadIndex(context.Context, *ReadIndexRequest) (*ReadIndexResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReadIndex not implemented")
 }
 func (UnimplementedRaftServiceServer) mustEmbedUnimplementedRaftServiceServer() {}
 func (UnimplementedRaftServiceServer) testEmbeddedByValue()                     {}
@@ -220,6 +236,24 @@ func _RaftService_TimeoutNow_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RaftService_ReadIndex_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReadIndexRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RaftServiceServer).ReadIndex(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RaftService_ReadIndex_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RaftServiceServer).ReadIndex(ctx, req.(*ReadIndexRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RaftService_ServiceDesc is the grpc.ServiceDesc for RaftService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -242,6 +276,10 @@ var RaftService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TimeoutNow",
 			Handler:    _RaftService_TimeoutNow_Handler,
+		},
+		{
+			MethodName: "ReadIndex",
+			Handler:    _RaftService_ReadIndex_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -84,10 +84,65 @@ passes its tests, and leaves the repository in a presentable state.
 | M2 | Raft core state machine, leader election, pre-vote, check-quorum, ReadIndex | ✅ done |
 | M3 | Log replication, commit advancement, log repair, §5.4 safety rules | ✅ done |
 | M4 | Crash-safe WAL, atomic snapshots, log compaction | ✅ done |
-| M5 | gRPC transport, KV API, linearizable reads, CLI | in progress |
-| M6 | Joint-consensus membership changes, learners | planned |
+| M5 | gRPC transport, KV API, linearizable reads, CLI | ✅ done |
+| M6 | Joint-consensus membership changes, learners | in progress |
 | M7 | Deterministic fault injection, linearizability checker | planned |
 | M8 | Metrics, benchmarks, Docker cluster, CI, design docs | planned |
+
+## Quickstart
+
+Start a three-node cluster on loopback:
+
+```bash
+make build
+PEERS="1=127.0.0.1:9301,2=127.0.0.1:9302,3=127.0.0.1:9303"
+for i in 1 2 3; do
+  ./bin/quorumkvd -id $i -addr 127.0.0.1:930$i -data-dir /tmp/qkv/n$i -peers "$PEERS" &
+done
+```
+
+Write through *any* node — a follower redirects you to the leader automatically:
+
+```console
+$ ./bin/quorumkvctl -endpoints 127.0.0.1:9301 put city accra
+OK  committed at index 2
+
+$ ./bin/quorumkvctl -endpoints 127.0.0.1:9301,127.0.0.1:9302,127.0.0.1:9303 status
+127.0.0.1:9301  node=1 role=leader    term=1 leader=1 commit=2 applied=2 last=2 snapshot=0
+    peer 1  voter   match=2        self     127.0.0.1:9301
+    peer 2  voter   match=2        up       127.0.0.1:9302
+    peer 3  voter   match=2        up       127.0.0.1:9303
+127.0.0.1:9302  node=2 role=follower  term=1 leader=1 commit=2 applied=2 last=2 snapshot=0
+    peer 1  voter   match=0        unknown  127.0.0.1:9301
+    peer 2  voter   match=0        self     127.0.0.1:9302
+    peer 3  voter   match=0        unknown  127.0.0.1:9303
+```
+
+Reachability is a tri-state, not a boolean. Only a leader initiates peer traffic,
+so a follower genuinely does not know whether its peers are alive — and reporting
+that as "down" would show healthy nodes as failed on every follower.
+
+Kill the leader and the cluster elects a new one within an election timeout, with
+every acknowledged write intact:
+
+```console
+$ kill <leader pid>
+$ ./bin/quorumkvctl -endpoints 127.0.0.1:9302,127.0.0.1:9303 get city
+accra
+```
+
+Other commands:
+
+```bash
+quorumkvctl get <key>                    # linearizable by default
+quorumkvctl -stale get <key>             # local read, no coordination
+quorumkvctl create <key> <value>         # create only if absent
+quorumkvctl cas <key> <expected> <new>   # conditional replace
+quorumkvctl del <key>
+```
+
+`create` and `cas` exit non-zero when the condition fails, so they compose in
+scripts as the coordination primitive they are.
 
 ## Build and test
 

@@ -92,6 +92,10 @@ message AppendRequest {
   // The leader's commit index, letting followers advance theirs without an
   // extra round trip.
   uint64 leader_commit = 6;
+  // When set, this heartbeat is also confirming leadership for a pending
+  // linearizable read. The follower echoes it, so the reply doubles as proof
+  // that this leader was still recognised after the read was recorded.
+  bytes read_ctx = 7;
 }
 
 message AppendResponse {
@@ -105,6 +109,9 @@ message AppendResponse {
   // decrementing one index at a time.
   uint64 hint_index = 5;
   uint64 hint_term = 6;
+  // Echoes the request's read_ctx. Echoed on rejection too: what the leader
+  // needs is proof the follower recognised it, which a rejection also provides.
+  bytes read_ctx = 7;
 }
 
 // SnapshotRequest is InstallSnapshot (Raft §7), sent when a follower has fallen
@@ -133,6 +140,27 @@ message TimeoutNowRequest {
 
 message TimeoutNowResponse {}
 
+// ReadIndexRequest asks the leader for the commit index a linearizable read must
+// observe (§6.4). A follower forwards a client's read through this rather than
+// answering from its own state, which may lag arbitrarily.
+message ReadIndexRequest {
+  uint64 term = 1;
+  uint64 from_id = 2;
+  // An opaque token echoed in the response so a reply can be matched to its
+  // request.
+  bytes read_ctx = 3;
+}
+
+message ReadIndexResponse {
+  uint64 term = 1;
+  uint64 from_id = 2;
+  // Set when the leader cannot prove it still leads, in which case the caller
+  // must retry rather than serve the read.
+  bool reject = 3;
+  uint64 read_index = 4;
+  bytes read_ctx = 5;
+}
+
 // RaftService is the peer-to-peer consensus surface. It is never exposed to
 // clients: every method here trusts the caller to be a cluster member.
 service RaftService {
@@ -140,4 +168,5 @@ service RaftService {
   rpc AppendEntries(AppendRequest) returns (AppendResponse);
   rpc InstallSnapshot(SnapshotRequest) returns (SnapshotResponse);
   rpc TimeoutNow(TimeoutNowRequest) returns (TimeoutNowResponse);
+  rpc ReadIndex(ReadIndexRequest) returns (ReadIndexResponse);
 }

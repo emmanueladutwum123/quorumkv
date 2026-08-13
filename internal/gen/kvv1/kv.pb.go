@@ -81,6 +81,59 @@ func (ConsistencyLevel) EnumDescriptor() ([]byte, []int) {
 	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{0}
 }
 
+// OpType is the mutation a Command carries.
+type OpType int32
+
+const (
+	OpType_OP_TYPE_UNSPECIFIED OpType = 0
+	OpType_OP_TYPE_PUT         OpType = 1
+	OpType_OP_TYPE_DELETE      OpType = 2
+	OpType_OP_TYPE_CAS         OpType = 3
+)
+
+// Enum value maps for OpType.
+var (
+	OpType_name = map[int32]string{
+		0: "OP_TYPE_UNSPECIFIED",
+		1: "OP_TYPE_PUT",
+		2: "OP_TYPE_DELETE",
+		3: "OP_TYPE_CAS",
+	}
+	OpType_value = map[string]int32{
+		"OP_TYPE_UNSPECIFIED": 0,
+		"OP_TYPE_PUT":         1,
+		"OP_TYPE_DELETE":      2,
+		"OP_TYPE_CAS":         3,
+	}
+)
+
+func (x OpType) Enum() *OpType {
+	p := new(OpType)
+	*p = x
+	return p
+}
+
+func (x OpType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (OpType) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_kv_v1_kv_proto_enumTypes[1].Descriptor()
+}
+
+func (OpType) Type() protoreflect.EnumType {
+	return &file_proto_kv_v1_kv_proto_enumTypes[1]
+}
+
+func (x OpType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use OpType.Descriptor instead.
+func (OpType) EnumDescriptor() ([]byte, []int) {
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{1}
+}
+
 // ConfChangeType enumerates membership operations.
 type ConfChangeType int32
 
@@ -124,11 +177,11 @@ func (x ConfChangeType) String() string {
 }
 
 func (ConfChangeType) Descriptor() protoreflect.EnumDescriptor {
-	return file_proto_kv_v1_kv_proto_enumTypes[1].Descriptor()
+	return file_proto_kv_v1_kv_proto_enumTypes[2].Descriptor()
 }
 
 func (ConfChangeType) Type() protoreflect.EnumType {
-	return &file_proto_kv_v1_kv_proto_enumTypes[1]
+	return &file_proto_kv_v1_kv_proto_enumTypes[2]
 }
 
 func (x ConfChangeType) Number() protoreflect.EnumNumber {
@@ -137,7 +190,7 @@ func (x ConfChangeType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ConfChangeType.Descriptor instead.
 func (ConfChangeType) EnumDescriptor() ([]byte, []int) {
-	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{1}
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{2}
 }
 
 // RequestHeader carries the client identity used for exactly-once semantics.
@@ -200,6 +253,345 @@ func (x *RequestHeader) GetSequence() uint64 {
 	return 0
 }
 
+// Command is the payload of a replicated log entry: the durable, ordered record
+// of a mutation.
+//
+// It is defined as a protobuf message rather than an ad-hoc encoding because it
+// is the one format that must survive a rolling upgrade. During one, a node
+// running the new build applies entries written by the old build and vice versa,
+// so the encoding has to tolerate added fields in both directions.
+type Command struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Op    OpType                 `protobuf:"varint,1,opt,name=op,proto3,enum=quorumkv.kv.v1.OpType" json:"op,omitempty"`
+	Key   []byte                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
+	Value []byte                 `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
+	// For a compare-and-swap: the value the key must hold, or - when expect_absent
+	// is set - the requirement that it hold nothing at all.
+	ExpectedValue []byte `protobuf:"bytes,4,opt,name=expected_value,json=expectedValue,proto3" json:"expected_value,omitempty"`
+	ExpectAbsent  bool   `protobuf:"varint,5,opt,name=expect_absent,json=expectAbsent,proto3" json:"expect_absent,omitempty"`
+	// Identifies the client and request, so a retry that reaches the log twice is
+	// applied once. See CommandResult and the session table.
+	Header        *RequestHeader `protobuf:"bytes,6,opt,name=header,proto3" json:"header,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Command) Reset() {
+	*x = Command{}
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Command) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Command) ProtoMessage() {}
+
+func (x *Command) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Command.ProtoReflect.Descriptor instead.
+func (*Command) Descriptor() ([]byte, []int) {
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *Command) GetOp() OpType {
+	if x != nil {
+		return x.Op
+	}
+	return OpType_OP_TYPE_UNSPECIFIED
+}
+
+func (x *Command) GetKey() []byte {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
+func (x *Command) GetValue() []byte {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+func (x *Command) GetExpectedValue() []byte {
+	if x != nil {
+		return x.ExpectedValue
+	}
+	return nil
+}
+
+func (x *Command) GetExpectAbsent() bool {
+	if x != nil {
+		return x.ExpectAbsent
+	}
+	return false
+}
+
+func (x *Command) GetHeader() *RequestHeader {
+	if x != nil {
+		return x.Header
+	}
+	return nil
+}
+
+// CommandResult is what applying a Command produced. It is cached per client
+// session so that a duplicate command returns its original answer instead of
+// being applied a second time.
+type CommandResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Swapped       bool                   `protobuf:"varint,1,opt,name=swapped,proto3" json:"swapped,omitempty"`
+	Existed       bool                   `protobuf:"varint,2,opt,name=existed,proto3" json:"existed,omitempty"`
+	CurrentValue  []byte                 `protobuf:"bytes,3,opt,name=current_value,json=currentValue,proto3" json:"current_value,omitempty"`
+	Found         bool                   `protobuf:"varint,4,opt,name=found,proto3" json:"found,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CommandResult) Reset() {
+	*x = CommandResult{}
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CommandResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CommandResult) ProtoMessage() {}
+
+func (x *CommandResult) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CommandResult.ProtoReflect.Descriptor instead.
+func (*CommandResult) Descriptor() ([]byte, []int) {
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *CommandResult) GetSwapped() bool {
+	if x != nil {
+		return x.Swapped
+	}
+	return false
+}
+
+func (x *CommandResult) GetExisted() bool {
+	if x != nil {
+		return x.Existed
+	}
+	return false
+}
+
+func (x *CommandResult) GetCurrentValue() []byte {
+	if x != nil {
+		return x.CurrentValue
+	}
+	return nil
+}
+
+func (x *CommandResult) GetFound() bool {
+	if x != nil {
+		return x.Found
+	}
+	return false
+}
+
+// KeyValue is one entry of the state machine, used in snapshots.
+type KeyValue struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           []byte                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Value         []byte                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KeyValue) Reset() {
+	*x = KeyValue{}
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KeyValue) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KeyValue) ProtoMessage() {}
+
+func (x *KeyValue) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KeyValue.ProtoReflect.Descriptor instead.
+func (*KeyValue) Descriptor() ([]byte, []int) {
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *KeyValue) GetKey() []byte {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
+func (x *KeyValue) GetValue() []byte {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+// Session records the last request applied for one client, with its result.
+type Session struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ClientId      uint64                 `protobuf:"varint,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	Sequence      uint64                 `protobuf:"varint,2,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	Result        *CommandResult         `protobuf:"bytes,3,opt,name=result,proto3" json:"result,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Session) Reset() {
+	*x = Session{}
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Session) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Session) ProtoMessage() {}
+
+func (x *Session) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Session.ProtoReflect.Descriptor instead.
+func (*Session) Descriptor() ([]byte, []int) {
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *Session) GetClientId() uint64 {
+	if x != nil {
+		return x.ClientId
+	}
+	return 0
+}
+
+func (x *Session) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *Session) GetResult() *CommandResult {
+	if x != nil {
+		return x.Result
+	}
+	return nil
+}
+
+// StoreSnapshot is the serialised state machine: the key space plus the session
+// table.
+//
+// The sessions travel with the data because they are part of the replicated
+// state. A failover that forgot which requests it had already served would
+// re-apply them, which is precisely the duplication the session table exists to
+// prevent.
+type StoreSnapshot struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Entries       []*KeyValue            `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
+	Sessions      []*Session             `protobuf:"bytes,2,rep,name=sessions,proto3" json:"sessions,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StoreSnapshot) Reset() {
+	*x = StoreSnapshot{}
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StoreSnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StoreSnapshot) ProtoMessage() {}
+
+func (x *StoreSnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StoreSnapshot.ProtoReflect.Descriptor instead.
+func (*StoreSnapshot) Descriptor() ([]byte, []int) {
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *StoreSnapshot) GetEntries() []*KeyValue {
+	if x != nil {
+		return x.Entries
+	}
+	return nil
+}
+
+func (x *StoreSnapshot) GetSessions() []*Session {
+	if x != nil {
+		return x.Sessions
+	}
+	return nil
+}
+
 type PutRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Header        *RequestHeader         `protobuf:"bytes,1,opt,name=header,proto3" json:"header,omitempty"`
@@ -211,7 +603,7 @@ type PutRequest struct {
 
 func (x *PutRequest) Reset() {
 	*x = PutRequest{}
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[1]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -223,7 +615,7 @@ func (x *PutRequest) String() string {
 func (*PutRequest) ProtoMessage() {}
 
 func (x *PutRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[1]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -236,7 +628,7 @@ func (x *PutRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutRequest.ProtoReflect.Descriptor instead.
 func (*PutRequest) Descriptor() ([]byte, []int) {
-	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{1}
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *PutRequest) GetHeader() *RequestHeader {
@@ -271,7 +663,7 @@ type PutResponse struct {
 
 func (x *PutResponse) Reset() {
 	*x = PutResponse{}
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[2]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -283,7 +675,7 @@ func (x *PutResponse) String() string {
 func (*PutResponse) ProtoMessage() {}
 
 func (x *PutResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[2]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -296,7 +688,7 @@ func (x *PutResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PutResponse.ProtoReflect.Descriptor instead.
 func (*PutResponse) Descriptor() ([]byte, []int) {
-	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{2}
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *PutResponse) GetCommitIndex() uint64 {
@@ -316,7 +708,7 @@ type GetRequest struct {
 
 func (x *GetRequest) Reset() {
 	*x = GetRequest{}
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[3]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -328,7 +720,7 @@ func (x *GetRequest) String() string {
 func (*GetRequest) ProtoMessage() {}
 
 func (x *GetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[3]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -341,7 +733,7 @@ func (x *GetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRequest.ProtoReflect.Descriptor instead.
 func (*GetRequest) Descriptor() ([]byte, []int) {
-	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{3}
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *GetRequest) GetKey() []byte {
@@ -369,7 +761,7 @@ type GetResponse struct {
 
 func (x *GetResponse) Reset() {
 	*x = GetResponse{}
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[4]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -381,7 +773,7 @@ func (x *GetResponse) String() string {
 func (*GetResponse) ProtoMessage() {}
 
 func (x *GetResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[4]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -394,7 +786,7 @@ func (x *GetResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetResponse.ProtoReflect.Descriptor instead.
 func (*GetResponse) Descriptor() ([]byte, []int) {
-	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{4}
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *GetResponse) GetValue() []byte {
@@ -428,7 +820,7 @@ type DeleteRequest struct {
 
 func (x *DeleteRequest) Reset() {
 	*x = DeleteRequest{}
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[5]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -440,7 +832,7 @@ func (x *DeleteRequest) String() string {
 func (*DeleteRequest) ProtoMessage() {}
 
 func (x *DeleteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[5]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -453,7 +845,7 @@ func (x *DeleteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteRequest.ProtoReflect.Descriptor instead.
 func (*DeleteRequest) Descriptor() ([]byte, []int) {
-	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{5}
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *DeleteRequest) GetHeader() *RequestHeader {
@@ -480,7 +872,7 @@ type DeleteResponse struct {
 
 func (x *DeleteResponse) Reset() {
 	*x = DeleteResponse{}
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[6]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -492,7 +884,7 @@ func (x *DeleteResponse) String() string {
 func (*DeleteResponse) ProtoMessage() {}
 
 func (x *DeleteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[6]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -505,7 +897,7 @@ func (x *DeleteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteResponse.ProtoReflect.Descriptor instead.
 func (*DeleteResponse) Descriptor() ([]byte, []int) {
-	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{6}
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *DeleteResponse) GetExisted() bool {
@@ -541,7 +933,7 @@ type CompareAndSwapRequest struct {
 
 func (x *CompareAndSwapRequest) Reset() {
 	*x = CompareAndSwapRequest{}
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[7]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -553,7 +945,7 @@ func (x *CompareAndSwapRequest) String() string {
 func (*CompareAndSwapRequest) ProtoMessage() {}
 
 func (x *CompareAndSwapRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[7]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -566,7 +958,7 @@ func (x *CompareAndSwapRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompareAndSwapRequest.ProtoReflect.Descriptor instead.
 func (*CompareAndSwapRequest) Descriptor() ([]byte, []int) {
-	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{7}
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *CompareAndSwapRequest) GetHeader() *RequestHeader {
@@ -617,7 +1009,7 @@ type CompareAndSwapResponse struct {
 
 func (x *CompareAndSwapResponse) Reset() {
 	*x = CompareAndSwapResponse{}
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[8]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -629,7 +1021,7 @@ func (x *CompareAndSwapResponse) String() string {
 func (*CompareAndSwapResponse) ProtoMessage() {}
 
 func (x *CompareAndSwapResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[8]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -642,7 +1034,7 @@ func (x *CompareAndSwapResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompareAndSwapResponse.ProtoReflect.Descriptor instead.
 func (*CompareAndSwapResponse) Descriptor() ([]byte, []int) {
-	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{8}
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *CompareAndSwapResponse) GetSwapped() bool {
@@ -686,7 +1078,7 @@ type ChangeMembershipRequest struct {
 
 func (x *ChangeMembershipRequest) Reset() {
 	*x = ChangeMembershipRequest{}
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[9]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -698,7 +1090,7 @@ func (x *ChangeMembershipRequest) String() string {
 func (*ChangeMembershipRequest) ProtoMessage() {}
 
 func (x *ChangeMembershipRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[9]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -711,7 +1103,7 @@ func (x *ChangeMembershipRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangeMembershipRequest.ProtoReflect.Descriptor instead.
 func (*ChangeMembershipRequest) Descriptor() ([]byte, []int) {
-	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{9}
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ChangeMembershipRequest) GetType() ConfChangeType {
@@ -744,7 +1136,7 @@ type ChangeMembershipResponse struct {
 
 func (x *ChangeMembershipResponse) Reset() {
 	*x = ChangeMembershipResponse{}
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[10]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -756,7 +1148,7 @@ func (x *ChangeMembershipResponse) String() string {
 func (*ChangeMembershipResponse) ProtoMessage() {}
 
 func (x *ChangeMembershipResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[10]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -769,7 +1161,7 @@ func (x *ChangeMembershipResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangeMembershipResponse.ProtoReflect.Descriptor instead.
 func (*ChangeMembershipResponse) Descriptor() ([]byte, []int) {
-	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{10}
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ChangeMembershipResponse) GetCommitIndex() uint64 {
@@ -787,7 +1179,7 @@ type StatusRequest struct {
 
 func (x *StatusRequest) Reset() {
 	*x = StatusRequest{}
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[11]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -799,7 +1191,7 @@ func (x *StatusRequest) String() string {
 func (*StatusRequest) ProtoMessage() {}
 
 func (x *StatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[11]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -812,7 +1204,7 @@ func (x *StatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusRequest.ProtoReflect.Descriptor instead.
 func (*StatusRequest) Descriptor() ([]byte, []int) {
-	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{11}
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{16}
 }
 
 // StatusResponse is the operator's view of a node: enough to answer "who is the
@@ -834,7 +1226,7 @@ type StatusResponse struct {
 
 func (x *StatusResponse) Reset() {
 	*x = StatusResponse{}
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[12]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -846,7 +1238,7 @@ func (x *StatusResponse) String() string {
 func (*StatusResponse) ProtoMessage() {}
 
 func (x *StatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[12]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -859,7 +1251,7 @@ func (x *StatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusResponse.ProtoReflect.Descriptor instead.
 func (*StatusResponse) Descriptor() ([]byte, []int) {
-	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{12}
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *StatusResponse) GetNodeId() uint64 {
@@ -926,19 +1318,25 @@ func (x *StatusResponse) GetPeers() []*PeerStatus {
 }
 
 type PeerStatus struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	NodeId        uint64                 `protobuf:"varint,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	Address       string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
-	MatchIndex    uint64                 `protobuf:"varint,3,opt,name=match_index,json=matchIndex,proto3" json:"match_index,omitempty"`
-	IsLearner     bool                   `protobuf:"varint,4,opt,name=is_learner,json=isLearner,proto3" json:"is_learner,omitempty"`
-	Reachable     bool                   `protobuf:"varint,5,opt,name=reachable,proto3" json:"reachable,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	NodeId  uint64                 `protobuf:"varint,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Address string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+	// Highest index known replicated on this peer. Only a leader tracks this, so
+	// it is zero when reported by anyone else.
+	MatchIndex uint64 `protobuf:"varint,3,opt,name=match_index,json=matchIndex,proto3" json:"match_index,omitempty"`
+	IsLearner  bool   `protobuf:"varint,4,opt,name=is_learner,json=isLearner,proto3" json:"is_learner,omitempty"`
+	// Reachability is a tri-state rather than a boolean: "self", "up", "down", or
+	// "unknown". Only a leader initiates peer traffic, so a follower genuinely does
+	// not know whether its peers are alive. Reporting that as "down" — which a
+	// boolean forces — would show healthy nodes as failed on every follower.
+	Reachability  string `protobuf:"bytes,6,opt,name=reachability,proto3" json:"reachability,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PeerStatus) Reset() {
 	*x = PeerStatus{}
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[13]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -950,7 +1348,7 @@ func (x *PeerStatus) String() string {
 func (*PeerStatus) ProtoMessage() {}
 
 func (x *PeerStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_kv_v1_kv_proto_msgTypes[13]
+	mi := &file_proto_kv_v1_kv_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -963,7 +1361,7 @@ func (x *PeerStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PeerStatus.ProtoReflect.Descriptor instead.
 func (*PeerStatus) Descriptor() ([]byte, []int) {
-	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{13}
+	return file_proto_kv_v1_kv_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *PeerStatus) GetNodeId() uint64 {
@@ -994,11 +1392,11 @@ func (x *PeerStatus) GetIsLearner() bool {
 	return false
 }
 
-func (x *PeerStatus) GetReachable() bool {
+func (x *PeerStatus) GetReachability() string {
 	if x != nil {
-		return x.Reachable
+		return x.Reachability
 	}
-	return false
+	return ""
 }
 
 var File_proto_kv_v1_kv_proto protoreflect.FileDescriptor
@@ -1008,7 +1406,29 @@ const file_proto_kv_v1_kv_proto_rawDesc = "" +
 	"\x14proto/kv/v1/kv.proto\x12\x0equorumkv.kv.v1\"H\n" +
 	"\rRequestHeader\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\x04R\bclientId\x12\x1a\n" +
-	"\bsequence\x18\x02 \x01(\x04R\bsequence\"k\n" +
+	"\bsequence\x18\x02 \x01(\x04R\bsequence\"\xdc\x01\n" +
+	"\aCommand\x12&\n" +
+	"\x02op\x18\x01 \x01(\x0e2\x16.quorumkv.kv.v1.OpTypeR\x02op\x12\x10\n" +
+	"\x03key\x18\x02 \x01(\fR\x03key\x12\x14\n" +
+	"\x05value\x18\x03 \x01(\fR\x05value\x12%\n" +
+	"\x0eexpected_value\x18\x04 \x01(\fR\rexpectedValue\x12#\n" +
+	"\rexpect_absent\x18\x05 \x01(\bR\fexpectAbsent\x125\n" +
+	"\x06header\x18\x06 \x01(\v2\x1d.quorumkv.kv.v1.RequestHeaderR\x06header\"~\n" +
+	"\rCommandResult\x12\x18\n" +
+	"\aswapped\x18\x01 \x01(\bR\aswapped\x12\x18\n" +
+	"\aexisted\x18\x02 \x01(\bR\aexisted\x12#\n" +
+	"\rcurrent_value\x18\x03 \x01(\fR\fcurrentValue\x12\x14\n" +
+	"\x05found\x18\x04 \x01(\bR\x05found\"2\n" +
+	"\bKeyValue\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\fR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value\"y\n" +
+	"\aSession\x12\x1b\n" +
+	"\tclient_id\x18\x01 \x01(\x04R\bclientId\x12\x1a\n" +
+	"\bsequence\x18\x02 \x01(\x04R\bsequence\x125\n" +
+	"\x06result\x18\x03 \x01(\v2\x1d.quorumkv.kv.v1.CommandResultR\x06result\"x\n" +
+	"\rStoreSnapshot\x122\n" +
+	"\aentries\x18\x01 \x03(\v2\x18.quorumkv.kv.v1.KeyValueR\aentries\x123\n" +
+	"\bsessions\x18\x02 \x03(\v2\x17.quorumkv.kv.v1.SessionR\bsessions\"k\n" +
 	"\n" +
 	"PutRequest\x125\n" +
 	"\x06header\x18\x01 \x01(\v2\x1d.quorumkv.kv.v1.RequestHeaderR\x06header\x12\x10\n" +
@@ -1058,7 +1478,7 @@ const file_proto_kv_v1_kv_proto_rawDesc = "" +
 	"\rapplied_index\x18\x06 \x01(\x04R\fappliedIndex\x12$\n" +
 	"\x0elast_log_index\x18\a \x01(\x04R\flastLogIndex\x12%\n" +
 	"\x0esnapshot_index\x18\b \x01(\x04R\rsnapshotIndex\x120\n" +
-	"\x05peers\x18\t \x03(\v2\x1a.quorumkv.kv.v1.PeerStatusR\x05peers\"\x9d\x01\n" +
+	"\x05peers\x18\t \x03(\v2\x1a.quorumkv.kv.v1.PeerStatusR\x05peers\"\xb4\x01\n" +
 	"\n" +
 	"PeerStatus\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\x04R\x06nodeId\x12\x18\n" +
@@ -1066,12 +1486,17 @@ const file_proto_kv_v1_kv_proto_rawDesc = "" +
 	"\vmatch_index\x18\x03 \x01(\x04R\n" +
 	"matchIndex\x12\x1d\n" +
 	"\n" +
-	"is_learner\x18\x04 \x01(\bR\tisLearner\x12\x1c\n" +
-	"\treachable\x18\x05 \x01(\bR\treachable*v\n" +
+	"is_learner\x18\x04 \x01(\bR\tisLearner\x12\"\n" +
+	"\freachability\x18\x06 \x01(\tR\freachabilityJ\x04\b\x05\x10\x06R\treachable*v\n" +
 	"\x10ConsistencyLevel\x12!\n" +
 	"\x1dCONSISTENCY_LEVEL_UNSPECIFIED\x10\x00\x12\"\n" +
 	"\x1eCONSISTENCY_LEVEL_LINEARIZABLE\x10\x01\x12\x1b\n" +
-	"\x17CONSISTENCY_LEVEL_STALE\x10\x02*\xbc\x01\n" +
+	"\x17CONSISTENCY_LEVEL_STALE\x10\x02*W\n" +
+	"\x06OpType\x12\x17\n" +
+	"\x13OP_TYPE_UNSPECIFIED\x10\x00\x12\x0f\n" +
+	"\vOP_TYPE_PUT\x10\x01\x12\x12\n" +
+	"\x0eOP_TYPE_DELETE\x10\x02\x12\x0f\n" +
+	"\vOP_TYPE_CAS\x10\x03*\xbc\x01\n" +
 	"\x0eConfChangeType\x12 \n" +
 	"\x1cCONF_CHANGE_TYPE_UNSPECIFIED\x10\x00\x12\x1e\n" +
 	"\x1aCONF_CHANGE_TYPE_ADD_VOTER\x10\x01\x12 \n" +
@@ -1098,50 +1523,61 @@ func file_proto_kv_v1_kv_proto_rawDescGZIP() []byte {
 	return file_proto_kv_v1_kv_proto_rawDescData
 }
 
-var file_proto_kv_v1_kv_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_proto_kv_v1_kv_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_proto_kv_v1_kv_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_proto_kv_v1_kv_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_proto_kv_v1_kv_proto_goTypes = []any{
 	(ConsistencyLevel)(0),            // 0: quorumkv.kv.v1.ConsistencyLevel
-	(ConfChangeType)(0),              // 1: quorumkv.kv.v1.ConfChangeType
-	(*RequestHeader)(nil),            // 2: quorumkv.kv.v1.RequestHeader
-	(*PutRequest)(nil),               // 3: quorumkv.kv.v1.PutRequest
-	(*PutResponse)(nil),              // 4: quorumkv.kv.v1.PutResponse
-	(*GetRequest)(nil),               // 5: quorumkv.kv.v1.GetRequest
-	(*GetResponse)(nil),              // 6: quorumkv.kv.v1.GetResponse
-	(*DeleteRequest)(nil),            // 7: quorumkv.kv.v1.DeleteRequest
-	(*DeleteResponse)(nil),           // 8: quorumkv.kv.v1.DeleteResponse
-	(*CompareAndSwapRequest)(nil),    // 9: quorumkv.kv.v1.CompareAndSwapRequest
-	(*CompareAndSwapResponse)(nil),   // 10: quorumkv.kv.v1.CompareAndSwapResponse
-	(*ChangeMembershipRequest)(nil),  // 11: quorumkv.kv.v1.ChangeMembershipRequest
-	(*ChangeMembershipResponse)(nil), // 12: quorumkv.kv.v1.ChangeMembershipResponse
-	(*StatusRequest)(nil),            // 13: quorumkv.kv.v1.StatusRequest
-	(*StatusResponse)(nil),           // 14: quorumkv.kv.v1.StatusResponse
-	(*PeerStatus)(nil),               // 15: quorumkv.kv.v1.PeerStatus
+	(OpType)(0),                      // 1: quorumkv.kv.v1.OpType
+	(ConfChangeType)(0),              // 2: quorumkv.kv.v1.ConfChangeType
+	(*RequestHeader)(nil),            // 3: quorumkv.kv.v1.RequestHeader
+	(*Command)(nil),                  // 4: quorumkv.kv.v1.Command
+	(*CommandResult)(nil),            // 5: quorumkv.kv.v1.CommandResult
+	(*KeyValue)(nil),                 // 6: quorumkv.kv.v1.KeyValue
+	(*Session)(nil),                  // 7: quorumkv.kv.v1.Session
+	(*StoreSnapshot)(nil),            // 8: quorumkv.kv.v1.StoreSnapshot
+	(*PutRequest)(nil),               // 9: quorumkv.kv.v1.PutRequest
+	(*PutResponse)(nil),              // 10: quorumkv.kv.v1.PutResponse
+	(*GetRequest)(nil),               // 11: quorumkv.kv.v1.GetRequest
+	(*GetResponse)(nil),              // 12: quorumkv.kv.v1.GetResponse
+	(*DeleteRequest)(nil),            // 13: quorumkv.kv.v1.DeleteRequest
+	(*DeleteResponse)(nil),           // 14: quorumkv.kv.v1.DeleteResponse
+	(*CompareAndSwapRequest)(nil),    // 15: quorumkv.kv.v1.CompareAndSwapRequest
+	(*CompareAndSwapResponse)(nil),   // 16: quorumkv.kv.v1.CompareAndSwapResponse
+	(*ChangeMembershipRequest)(nil),  // 17: quorumkv.kv.v1.ChangeMembershipRequest
+	(*ChangeMembershipResponse)(nil), // 18: quorumkv.kv.v1.ChangeMembershipResponse
+	(*StatusRequest)(nil),            // 19: quorumkv.kv.v1.StatusRequest
+	(*StatusResponse)(nil),           // 20: quorumkv.kv.v1.StatusResponse
+	(*PeerStatus)(nil),               // 21: quorumkv.kv.v1.PeerStatus
 }
 var file_proto_kv_v1_kv_proto_depIdxs = []int32{
-	2,  // 0: quorumkv.kv.v1.PutRequest.header:type_name -> quorumkv.kv.v1.RequestHeader
-	0,  // 1: quorumkv.kv.v1.GetRequest.consistency:type_name -> quorumkv.kv.v1.ConsistencyLevel
-	2,  // 2: quorumkv.kv.v1.DeleteRequest.header:type_name -> quorumkv.kv.v1.RequestHeader
-	2,  // 3: quorumkv.kv.v1.CompareAndSwapRequest.header:type_name -> quorumkv.kv.v1.RequestHeader
-	1,  // 4: quorumkv.kv.v1.ChangeMembershipRequest.type:type_name -> quorumkv.kv.v1.ConfChangeType
-	15, // 5: quorumkv.kv.v1.StatusResponse.peers:type_name -> quorumkv.kv.v1.PeerStatus
-	3,  // 6: quorumkv.kv.v1.KVService.Put:input_type -> quorumkv.kv.v1.PutRequest
-	5,  // 7: quorumkv.kv.v1.KVService.Get:input_type -> quorumkv.kv.v1.GetRequest
-	7,  // 8: quorumkv.kv.v1.KVService.Delete:input_type -> quorumkv.kv.v1.DeleteRequest
-	9,  // 9: quorumkv.kv.v1.KVService.CompareAndSwap:input_type -> quorumkv.kv.v1.CompareAndSwapRequest
-	11, // 10: quorumkv.kv.v1.KVService.ChangeMembership:input_type -> quorumkv.kv.v1.ChangeMembershipRequest
-	13, // 11: quorumkv.kv.v1.KVService.Status:input_type -> quorumkv.kv.v1.StatusRequest
-	4,  // 12: quorumkv.kv.v1.KVService.Put:output_type -> quorumkv.kv.v1.PutResponse
-	6,  // 13: quorumkv.kv.v1.KVService.Get:output_type -> quorumkv.kv.v1.GetResponse
-	8,  // 14: quorumkv.kv.v1.KVService.Delete:output_type -> quorumkv.kv.v1.DeleteResponse
-	10, // 15: quorumkv.kv.v1.KVService.CompareAndSwap:output_type -> quorumkv.kv.v1.CompareAndSwapResponse
-	12, // 16: quorumkv.kv.v1.KVService.ChangeMembership:output_type -> quorumkv.kv.v1.ChangeMembershipResponse
-	14, // 17: quorumkv.kv.v1.KVService.Status:output_type -> quorumkv.kv.v1.StatusResponse
-	12, // [12:18] is the sub-list for method output_type
-	6,  // [6:12] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	1,  // 0: quorumkv.kv.v1.Command.op:type_name -> quorumkv.kv.v1.OpType
+	3,  // 1: quorumkv.kv.v1.Command.header:type_name -> quorumkv.kv.v1.RequestHeader
+	5,  // 2: quorumkv.kv.v1.Session.result:type_name -> quorumkv.kv.v1.CommandResult
+	6,  // 3: quorumkv.kv.v1.StoreSnapshot.entries:type_name -> quorumkv.kv.v1.KeyValue
+	7,  // 4: quorumkv.kv.v1.StoreSnapshot.sessions:type_name -> quorumkv.kv.v1.Session
+	3,  // 5: quorumkv.kv.v1.PutRequest.header:type_name -> quorumkv.kv.v1.RequestHeader
+	0,  // 6: quorumkv.kv.v1.GetRequest.consistency:type_name -> quorumkv.kv.v1.ConsistencyLevel
+	3,  // 7: quorumkv.kv.v1.DeleteRequest.header:type_name -> quorumkv.kv.v1.RequestHeader
+	3,  // 8: quorumkv.kv.v1.CompareAndSwapRequest.header:type_name -> quorumkv.kv.v1.RequestHeader
+	2,  // 9: quorumkv.kv.v1.ChangeMembershipRequest.type:type_name -> quorumkv.kv.v1.ConfChangeType
+	21, // 10: quorumkv.kv.v1.StatusResponse.peers:type_name -> quorumkv.kv.v1.PeerStatus
+	9,  // 11: quorumkv.kv.v1.KVService.Put:input_type -> quorumkv.kv.v1.PutRequest
+	11, // 12: quorumkv.kv.v1.KVService.Get:input_type -> quorumkv.kv.v1.GetRequest
+	13, // 13: quorumkv.kv.v1.KVService.Delete:input_type -> quorumkv.kv.v1.DeleteRequest
+	15, // 14: quorumkv.kv.v1.KVService.CompareAndSwap:input_type -> quorumkv.kv.v1.CompareAndSwapRequest
+	17, // 15: quorumkv.kv.v1.KVService.ChangeMembership:input_type -> quorumkv.kv.v1.ChangeMembershipRequest
+	19, // 16: quorumkv.kv.v1.KVService.Status:input_type -> quorumkv.kv.v1.StatusRequest
+	10, // 17: quorumkv.kv.v1.KVService.Put:output_type -> quorumkv.kv.v1.PutResponse
+	12, // 18: quorumkv.kv.v1.KVService.Get:output_type -> quorumkv.kv.v1.GetResponse
+	14, // 19: quorumkv.kv.v1.KVService.Delete:output_type -> quorumkv.kv.v1.DeleteResponse
+	16, // 20: quorumkv.kv.v1.KVService.CompareAndSwap:output_type -> quorumkv.kv.v1.CompareAndSwapResponse
+	18, // 21: quorumkv.kv.v1.KVService.ChangeMembership:output_type -> quorumkv.kv.v1.ChangeMembershipResponse
+	20, // 22: quorumkv.kv.v1.KVService.Status:output_type -> quorumkv.kv.v1.StatusResponse
+	17, // [17:23] is the sub-list for method output_type
+	11, // [11:17] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_proto_kv_v1_kv_proto_init() }
@@ -1154,8 +1590,8 @@ func file_proto_kv_v1_kv_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_kv_v1_kv_proto_rawDesc), len(file_proto_kv_v1_kv_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   14,
+			NumEnums:      3,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

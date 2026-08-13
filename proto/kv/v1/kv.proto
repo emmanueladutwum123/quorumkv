@@ -33,6 +33,69 @@ message RequestHeader {
   uint64 sequence = 2;
 }
 
+// OpType is the mutation a Command carries.
+enum OpType {
+  OP_TYPE_UNSPECIFIED = 0;
+  OP_TYPE_PUT = 1;
+  OP_TYPE_DELETE = 2;
+  OP_TYPE_CAS = 3;
+}
+
+// Command is the payload of a replicated log entry: the durable, ordered record
+// of a mutation.
+//
+// It is defined as a protobuf message rather than an ad-hoc encoding because it
+// is the one format that must survive a rolling upgrade. During one, a node
+// running the new build applies entries written by the old build and vice versa,
+// so the encoding has to tolerate added fields in both directions.
+message Command {
+  OpType op = 1;
+  bytes key = 2;
+  bytes value = 3;
+  // For a compare-and-swap: the value the key must hold, or - when expect_absent
+  // is set - the requirement that it hold nothing at all.
+  bytes expected_value = 4;
+  bool expect_absent = 5;
+  // Identifies the client and request, so a retry that reaches the log twice is
+  // applied once. See CommandResult and the session table.
+  RequestHeader header = 6;
+}
+
+// CommandResult is what applying a Command produced. It is cached per client
+// session so that a duplicate command returns its original answer instead of
+// being applied a second time.
+message CommandResult {
+  bool swapped = 1;
+  bool existed = 2;
+  bytes current_value = 3;
+  bool found = 4;
+}
+
+// KeyValue is one entry of the state machine, used in snapshots.
+message KeyValue {
+  bytes key = 1;
+  bytes value = 2;
+}
+
+// Session records the last request applied for one client, with its result.
+message Session {
+  uint64 client_id = 1;
+  uint64 sequence = 2;
+  CommandResult result = 3;
+}
+
+// StoreSnapshot is the serialised state machine: the key space plus the session
+// table.
+//
+// The sessions travel with the data because they are part of the replicated
+// state. A failover that forgot which requests it had already served would
+// re-apply them, which is precisely the duplication the session table exists to
+// prevent.
+message StoreSnapshot {
+  repeated KeyValue entries = 1;
+  repeated Session sessions = 2;
+}
+
 message PutRequest {
   RequestHeader header = 1;
   bytes key = 2;
@@ -131,9 +194,19 @@ message StatusResponse {
 message PeerStatus {
   uint64 node_id = 1;
   string address = 2;
+  // Highest index known replicated on this peer. Only a leader tracks this, so
+  // it is zero when reported by anyone else.
   uint64 match_index = 3;
   bool is_learner = 4;
-  bool reachable = 5;
+
+  reserved 5;
+  reserved "reachable";
+
+  // Reachability is a tri-state rather than a boolean: "self", "up", "down", or
+  // "unknown". Only a leader initiates peer traffic, so a follower genuinely does
+  // not know whether its peers are alive. Reporting that as "down" — which a
+  // boolean forces — would show healthy nodes as failed on every follower.
+  string reachability = 6;
 }
 
 // KVService is the client surface. Write methods must be handled by the leader;

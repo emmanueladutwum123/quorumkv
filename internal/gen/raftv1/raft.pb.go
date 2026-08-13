@@ -460,7 +460,11 @@ type AppendRequest struct {
 	Entries      []*Entry `protobuf:"bytes,5,rep,name=entries,proto3" json:"entries,omitempty"`
 	// The leader's commit index, letting followers advance theirs without an
 	// extra round trip.
-	LeaderCommit  uint64 `protobuf:"varint,6,opt,name=leader_commit,json=leaderCommit,proto3" json:"leader_commit,omitempty"`
+	LeaderCommit uint64 `protobuf:"varint,6,opt,name=leader_commit,json=leaderCommit,proto3" json:"leader_commit,omitempty"`
+	// When set, this heartbeat is also confirming leadership for a pending
+	// linearizable read. The follower echoes it, so the reply doubles as proof
+	// that this leader was still recognised after the read was recorded.
+	ReadCtx       []byte `protobuf:"bytes,7,opt,name=read_ctx,json=readCtx,proto3" json:"read_ctx,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -537,6 +541,13 @@ func (x *AppendRequest) GetLeaderCommit() uint64 {
 	return 0
 }
 
+func (x *AppendRequest) GetReadCtx() []byte {
+	if x != nil {
+		return x.ReadCtx
+	}
+	return nil
+}
+
 type AppendResponse struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	Term       uint64                 `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
@@ -547,8 +558,11 @@ type AppendResponse struct {
 	// On rejection, where the follower's log actually diverges. This lets the
 	// leader skip an entire conflicting term per round trip instead of
 	// decrementing one index at a time.
-	HintIndex     uint64 `protobuf:"varint,5,opt,name=hint_index,json=hintIndex,proto3" json:"hint_index,omitempty"`
-	HintTerm      uint64 `protobuf:"varint,6,opt,name=hint_term,json=hintTerm,proto3" json:"hint_term,omitempty"`
+	HintIndex uint64 `protobuf:"varint,5,opt,name=hint_index,json=hintIndex,proto3" json:"hint_index,omitempty"`
+	HintTerm  uint64 `protobuf:"varint,6,opt,name=hint_term,json=hintTerm,proto3" json:"hint_term,omitempty"`
+	// Echoes the request's read_ctx. Echoed on rejection too: what the leader
+	// needs is proof the follower recognised it, which a rejection also provides.
+	ReadCtx       []byte `protobuf:"bytes,7,opt,name=read_ctx,json=readCtx,proto3" json:"read_ctx,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -623,6 +637,13 @@ func (x *AppendResponse) GetHintTerm() uint64 {
 		return x.HintTerm
 	}
 	return 0
+}
+
+func (x *AppendResponse) GetReadCtx() []byte {
+	if x != nil {
+		return x.ReadCtx
+	}
+	return nil
 }
 
 // SnapshotRequest is InstallSnapshot (Raft §7), sent when a follower has fallen
@@ -847,6 +868,149 @@ func (*TimeoutNowResponse) Descriptor() ([]byte, []int) {
 	return file_proto_raft_v1_raft_proto_rawDescGZIP(), []int{10}
 }
 
+// ReadIndexRequest asks the leader for the commit index a linearizable read must
+// observe (§6.4). A follower forwards a client's read through this rather than
+// answering from its own state, which may lag arbitrarily.
+type ReadIndexRequest struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Term   uint64                 `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
+	FromId uint64                 `protobuf:"varint,2,opt,name=from_id,json=fromId,proto3" json:"from_id,omitempty"`
+	// An opaque token echoed in the response so a reply can be matched to its
+	// request.
+	ReadCtx       []byte `protobuf:"bytes,3,opt,name=read_ctx,json=readCtx,proto3" json:"read_ctx,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReadIndexRequest) Reset() {
+	*x = ReadIndexRequest{}
+	mi := &file_proto_raft_v1_raft_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReadIndexRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReadIndexRequest) ProtoMessage() {}
+
+func (x *ReadIndexRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_raft_v1_raft_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReadIndexRequest.ProtoReflect.Descriptor instead.
+func (*ReadIndexRequest) Descriptor() ([]byte, []int) {
+	return file_proto_raft_v1_raft_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ReadIndexRequest) GetTerm() uint64 {
+	if x != nil {
+		return x.Term
+	}
+	return 0
+}
+
+func (x *ReadIndexRequest) GetFromId() uint64 {
+	if x != nil {
+		return x.FromId
+	}
+	return 0
+}
+
+func (x *ReadIndexRequest) GetReadCtx() []byte {
+	if x != nil {
+		return x.ReadCtx
+	}
+	return nil
+}
+
+type ReadIndexResponse struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Term   uint64                 `protobuf:"varint,1,opt,name=term,proto3" json:"term,omitempty"`
+	FromId uint64                 `protobuf:"varint,2,opt,name=from_id,json=fromId,proto3" json:"from_id,omitempty"`
+	// Set when the leader cannot prove it still leads, in which case the caller
+	// must retry rather than serve the read.
+	Reject        bool   `protobuf:"varint,3,opt,name=reject,proto3" json:"reject,omitempty"`
+	ReadIndex     uint64 `protobuf:"varint,4,opt,name=read_index,json=readIndex,proto3" json:"read_index,omitempty"`
+	ReadCtx       []byte `protobuf:"bytes,5,opt,name=read_ctx,json=readCtx,proto3" json:"read_ctx,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReadIndexResponse) Reset() {
+	*x = ReadIndexResponse{}
+	mi := &file_proto_raft_v1_raft_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReadIndexResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReadIndexResponse) ProtoMessage() {}
+
+func (x *ReadIndexResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_raft_v1_raft_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReadIndexResponse.ProtoReflect.Descriptor instead.
+func (*ReadIndexResponse) Descriptor() ([]byte, []int) {
+	return file_proto_raft_v1_raft_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ReadIndexResponse) GetTerm() uint64 {
+	if x != nil {
+		return x.Term
+	}
+	return 0
+}
+
+func (x *ReadIndexResponse) GetFromId() uint64 {
+	if x != nil {
+		return x.FromId
+	}
+	return 0
+}
+
+func (x *ReadIndexResponse) GetReject() bool {
+	if x != nil {
+		return x.Reject
+	}
+	return false
+}
+
+func (x *ReadIndexResponse) GetReadIndex() uint64 {
+	if x != nil {
+		return x.ReadIndex
+	}
+	return 0
+}
+
+func (x *ReadIndexResponse) GetReadCtx() []byte {
+	if x != nil {
+		return x.ReadCtx
+	}
+	return nil
+}
+
 var File_proto_raft_v1_raft_proto protoreflect.FileDescriptor
 
 const file_proto_raft_v1_raft_proto_rawDesc = "" +
@@ -876,14 +1040,15 @@ const file_proto_raft_v1_raft_proto_rawDesc = "" +
 	"\x04term\x18\x01 \x01(\x04R\x04term\x12\x19\n" +
 	"\bvoter_id\x18\x02 \x01(\x04R\avoterId\x12\x18\n" +
 	"\agranted\x18\x03 \x01(\bR\agranted\x12\x19\n" +
-	"\bpre_vote\x18\x04 \x01(\bR\apreVote\"\xe2\x01\n" +
+	"\bpre_vote\x18\x04 \x01(\bR\apreVote\"\xfd\x01\n" +
 	"\rAppendRequest\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x04R\x04term\x12\x1b\n" +
 	"\tleader_id\x18\x02 \x01(\x04R\bleaderId\x12$\n" +
 	"\x0eprev_log_index\x18\x03 \x01(\x04R\fprevLogIndex\x12\"\n" +
 	"\rprev_log_term\x18\x04 \x01(\x04R\vprevLogTerm\x121\n" +
 	"\aentries\x18\x05 \x03(\v2\x17.quorumkv.raft.v1.EntryR\aentries\x12#\n" +
-	"\rleader_commit\x18\x06 \x01(\x04R\fleaderCommit\"\xba\x01\n" +
+	"\rleader_commit\x18\x06 \x01(\x04R\fleaderCommit\x12\x19\n" +
+	"\bread_ctx\x18\a \x01(\fR\areadCtx\"\xd5\x01\n" +
 	"\x0eAppendResponse\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x04R\x04term\x12\x1f\n" +
 	"\vfollower_id\x18\x02 \x01(\x04R\n" +
@@ -893,7 +1058,8 @@ const file_proto_raft_v1_raft_proto_rawDesc = "" +
 	"matchIndex\x12\x1d\n" +
 	"\n" +
 	"hint_index\x18\x05 \x01(\x04R\thintIndex\x12\x1b\n" +
-	"\thint_term\x18\x06 \x01(\x04R\bhintTerm\"z\n" +
+	"\thint_term\x18\x06 \x01(\x04R\bhintTerm\x12\x19\n" +
+	"\bread_ctx\x18\a \x01(\fR\areadCtx\"z\n" +
 	"\x0fSnapshotRequest\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x04R\x04term\x12\x1b\n" +
 	"\tleader_id\x18\x02 \x01(\x04R\bleaderId\x126\n" +
@@ -908,18 +1074,30 @@ const file_proto_raft_v1_raft_proto_rawDesc = "" +
 	"\x11TimeoutNowRequest\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x04R\x04term\x12\x1b\n" +
 	"\tleader_id\x18\x02 \x01(\x04R\bleaderId\"\x14\n" +
-	"\x12TimeoutNowResponse*p\n" +
+	"\x12TimeoutNowResponse\"Z\n" +
+	"\x10ReadIndexRequest\x12\x12\n" +
+	"\x04term\x18\x01 \x01(\x04R\x04term\x12\x17\n" +
+	"\afrom_id\x18\x02 \x01(\x04R\x06fromId\x12\x19\n" +
+	"\bread_ctx\x18\x03 \x01(\fR\areadCtx\"\x92\x01\n" +
+	"\x11ReadIndexResponse\x12\x12\n" +
+	"\x04term\x18\x01 \x01(\x04R\x04term\x12\x17\n" +
+	"\afrom_id\x18\x02 \x01(\x04R\x06fromId\x12\x16\n" +
+	"\x06reject\x18\x03 \x01(\bR\x06reject\x12\x1d\n" +
+	"\n" +
+	"read_index\x18\x04 \x01(\x04R\treadIndex\x12\x19\n" +
+	"\bread_ctx\x18\x05 \x01(\fR\areadCtx*p\n" +
 	"\tEntryType\x12\x1a\n" +
 	"\x16ENTRY_TYPE_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11ENTRY_TYPE_NORMAL\x10\x01\x12\x14\n" +
 	"\x10ENTRY_TYPE_NO_OP\x10\x02\x12\x1a\n" +
-	"\x16ENTRY_TYPE_CONF_CHANGE\x10\x032\xe2\x02\n" +
+	"\x16ENTRY_TYPE_CONF_CHANGE\x10\x032\xb8\x03\n" +
 	"\vRaftService\x12L\n" +
 	"\vRequestVote\x12\x1d.quorumkv.raft.v1.VoteRequest\x1a\x1e.quorumkv.raft.v1.VoteResponse\x12R\n" +
 	"\rAppendEntries\x12\x1f.quorumkv.raft.v1.AppendRequest\x1a .quorumkv.raft.v1.AppendResponse\x12X\n" +
 	"\x0fInstallSnapshot\x12!.quorumkv.raft.v1.SnapshotRequest\x1a\".quorumkv.raft.v1.SnapshotResponse\x12W\n" +
 	"\n" +
-	"TimeoutNow\x12#.quorumkv.raft.v1.TimeoutNowRequest\x1a$.quorumkv.raft.v1.TimeoutNowResponseBCZAgithub.com/emmanueladutwum123/quorumkv/internal/gen/raftv1;raftv1b\x06proto3"
+	"TimeoutNow\x12#.quorumkv.raft.v1.TimeoutNowRequest\x1a$.quorumkv.raft.v1.TimeoutNowResponse\x12T\n" +
+	"\tReadIndex\x12\".quorumkv.raft.v1.ReadIndexRequest\x1a#.quorumkv.raft.v1.ReadIndexResponseBCZAgithub.com/emmanueladutwum123/quorumkv/internal/gen/raftv1;raftv1b\x06proto3"
 
 var (
 	file_proto_raft_v1_raft_proto_rawDescOnce sync.Once
@@ -934,7 +1112,7 @@ func file_proto_raft_v1_raft_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_raft_v1_raft_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_raft_v1_raft_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_proto_raft_v1_raft_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_proto_raft_v1_raft_proto_goTypes = []any{
 	(EntryType)(0),             // 0: quorumkv.raft.v1.EntryType
 	(*Entry)(nil),              // 1: quorumkv.raft.v1.Entry
@@ -948,6 +1126,8 @@ var file_proto_raft_v1_raft_proto_goTypes = []any{
 	(*SnapshotResponse)(nil),   // 9: quorumkv.raft.v1.SnapshotResponse
 	(*TimeoutNowRequest)(nil),  // 10: quorumkv.raft.v1.TimeoutNowRequest
 	(*TimeoutNowResponse)(nil), // 11: quorumkv.raft.v1.TimeoutNowResponse
+	(*ReadIndexRequest)(nil),   // 12: quorumkv.raft.v1.ReadIndexRequest
+	(*ReadIndexResponse)(nil),  // 13: quorumkv.raft.v1.ReadIndexResponse
 }
 var file_proto_raft_v1_raft_proto_depIdxs = []int32{
 	0,  // 0: quorumkv.raft.v1.Entry.type:type_name -> quorumkv.raft.v1.EntryType
@@ -958,12 +1138,14 @@ var file_proto_raft_v1_raft_proto_depIdxs = []int32{
 	6,  // 5: quorumkv.raft.v1.RaftService.AppendEntries:input_type -> quorumkv.raft.v1.AppendRequest
 	8,  // 6: quorumkv.raft.v1.RaftService.InstallSnapshot:input_type -> quorumkv.raft.v1.SnapshotRequest
 	10, // 7: quorumkv.raft.v1.RaftService.TimeoutNow:input_type -> quorumkv.raft.v1.TimeoutNowRequest
-	5,  // 8: quorumkv.raft.v1.RaftService.RequestVote:output_type -> quorumkv.raft.v1.VoteResponse
-	7,  // 9: quorumkv.raft.v1.RaftService.AppendEntries:output_type -> quorumkv.raft.v1.AppendResponse
-	9,  // 10: quorumkv.raft.v1.RaftService.InstallSnapshot:output_type -> quorumkv.raft.v1.SnapshotResponse
-	11, // 11: quorumkv.raft.v1.RaftService.TimeoutNow:output_type -> quorumkv.raft.v1.TimeoutNowResponse
-	8,  // [8:12] is the sub-list for method output_type
-	4,  // [4:8] is the sub-list for method input_type
+	12, // 8: quorumkv.raft.v1.RaftService.ReadIndex:input_type -> quorumkv.raft.v1.ReadIndexRequest
+	5,  // 9: quorumkv.raft.v1.RaftService.RequestVote:output_type -> quorumkv.raft.v1.VoteResponse
+	7,  // 10: quorumkv.raft.v1.RaftService.AppendEntries:output_type -> quorumkv.raft.v1.AppendResponse
+	9,  // 11: quorumkv.raft.v1.RaftService.InstallSnapshot:output_type -> quorumkv.raft.v1.SnapshotResponse
+	11, // 12: quorumkv.raft.v1.RaftService.TimeoutNow:output_type -> quorumkv.raft.v1.TimeoutNowResponse
+	13, // 13: quorumkv.raft.v1.RaftService.ReadIndex:output_type -> quorumkv.raft.v1.ReadIndexResponse
+	9,  // [9:14] is the sub-list for method output_type
+	4,  // [4:9] is the sub-list for method input_type
 	4,  // [4:4] is the sub-list for extension type_name
 	4,  // [4:4] is the sub-list for extension extendee
 	0,  // [0:4] is the sub-list for field type_name
@@ -980,7 +1162,7 @@ func file_proto_raft_v1_raft_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_raft_v1_raft_proto_rawDesc), len(file_proto_raft_v1_raft_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   11,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
