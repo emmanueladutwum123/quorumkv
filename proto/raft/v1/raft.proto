@@ -1,0 +1,134 @@
+syntax = "proto3";
+
+// Package quorumkv.raft.v1 is the inter-node consensus protocol: the wire
+// contract between Raft peers.
+//
+// It is versioned separately from the client API (quorumkv.kv.v1) because the
+// two evolve independently — the peer protocol may only change in ways that
+// allow a rolling upgrade, since during one there are nodes of two versions
+// voting in the same cluster.
+package quorumkv.raft.v1;
+
+option go_package = "github.com/emmanueladutwum123/quorumkv/internal/gen/raftv1;raftv1";
+
+// EntryType mirrors raft.EntryType. Explicit UNSPECIFIED at zero follows proto3
+// convention, so the enum is offset by one from the Go type and the transport
+// codec converts rather than casts.
+enum EntryType {
+  ENTRY_TYPE_UNSPECIFIED = 0;
+  ENTRY_TYPE_NORMAL = 1;
+  // A blank entry a new leader commits to establish its commit index safely.
+  ENTRY_TYPE_NO_OP = 2;
+  // A membership change, interpreted by the consensus layer as it is applied.
+  ENTRY_TYPE_CONF_CHANGE = 3;
+}
+
+// Entry is one record of the replicated log. The (term, index) pair is its
+// identity: matching pairs on two nodes imply identical payloads and identical
+// prefixes.
+message Entry {
+  uint64 term = 1;
+  uint64 index = 2;
+  EntryType type = 3;
+  bytes data = 4;
+}
+
+// Config is a cluster membership.
+message Config {
+  // Voters of the incoming (currently in force) configuration.
+  repeated uint64 incoming_voters = 1;
+  // Voters of the outgoing configuration, non-empty only during a joint
+  // consensus transition, when a quorum is required in both sets.
+  repeated uint64 outgoing_voters = 2;
+  // Learners replicate the log but never vote or count toward quorum.
+  repeated uint64 learners = 3;
+}
+
+// Snapshot is a compacted log prefix: state machine contents as of index, plus
+// the membership in force there. It carries its own configuration because a
+// restoring node has no log left from which to replay membership changes.
+message Snapshot {
+  uint64 index = 1;
+  uint64 term = 2;
+  Config conf = 3;
+  bytes data = 4;
+}
+
+// VoteRequest is RequestVote (Raft §5.2).
+message VoteRequest {
+  uint64 term = 1;
+  uint64 candidate_id = 2;
+  // The candidate's last log entry, compared against the voter's own by the
+  // §5.4.1 election restriction.
+  uint64 last_log_index = 3;
+  uint64 last_log_term = 4;
+}
+
+message VoteResponse {
+  uint64 term = 1;
+  uint64 voter_id = 2;
+  bool granted = 3;
+}
+
+// AppendRequest is AppendEntries (Raft §5.3). With no entries it serves as the
+// leader's heartbeat.
+message AppendRequest {
+  uint64 term = 1;
+  uint64 leader_id = 2;
+  // The consistency check: the follower appends only if it holds a matching
+  // entry at this position.
+  uint64 prev_log_index = 3;
+  uint64 prev_log_term = 4;
+  repeated Entry entries = 5;
+  // The leader's commit index, letting followers advance theirs without an
+  // extra round trip.
+  uint64 leader_commit = 6;
+}
+
+message AppendResponse {
+  uint64 term = 1;
+  uint64 follower_id = 2;
+  bool reject = 3;
+  // Highest index accepted, on success. Drives the leader's commit arithmetic.
+  uint64 match_index = 4;
+  // On rejection, where the follower's log actually diverges. This lets the
+  // leader skip an entire conflicting term per round trip instead of
+  // decrementing one index at a time.
+  uint64 hint_index = 5;
+  uint64 hint_term = 6;
+}
+
+// SnapshotRequest is InstallSnapshot (Raft §7), sent when a follower has fallen
+// behind the leader's compaction boundary and can no longer be caught up with
+// log entries alone.
+message SnapshotRequest {
+  uint64 term = 1;
+  uint64 leader_id = 2;
+  Snapshot snapshot = 3;
+}
+
+message SnapshotResponse {
+  uint64 term = 1;
+  uint64 follower_id = 2;
+  bool reject = 3;
+  uint64 match_index = 4;
+}
+
+// TimeoutNowRequest asks a follower to begin an election immediately, used for
+// graceful leadership transfer so a node can be drained without waiting out an
+// election timeout.
+message TimeoutNowRequest {
+  uint64 term = 1;
+  uint64 leader_id = 2;
+}
+
+message TimeoutNowResponse {}
+
+// RaftService is the peer-to-peer consensus surface. It is never exposed to
+// clients: every method here trusts the caller to be a cluster member.
+service RaftService {
+  rpc RequestVote(VoteRequest) returns (VoteResponse);
+  rpc AppendEntries(AppendRequest) returns (AppendResponse);
+  rpc InstallSnapshot(SnapshotRequest) returns (SnapshotResponse);
+  rpc TimeoutNow(TimeoutNowRequest) returns (TimeoutNowResponse);
+}

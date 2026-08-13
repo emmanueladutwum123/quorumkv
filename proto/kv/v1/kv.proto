@@ -1,0 +1,149 @@
+syntax = "proto3";
+
+// Package quorumkv.kv.v1 is the client-facing key-value API.
+package quorumkv.kv.v1;
+
+option go_package = "github.com/emmanueladutwum123/quorumkv/internal/gen/kvv1;kvv1";
+
+// ConsistencyLevel selects what a read is allowed to observe. Exposing this as
+// a per-request choice rather than a cluster-wide setting lets a caller pay for
+// linearizability only where it needs it.
+enum ConsistencyLevel {
+  CONSISTENCY_LEVEL_UNSPECIFIED = 0;
+  // LINEARIZABLE reads reflect every write acknowledged before the read began.
+  // Served by the leader after it confirms it still holds leadership (ReadIndex,
+  // §6.4), which costs one round trip to a quorum but no log append.
+  CONSISTENCY_LEVEL_LINEARIZABLE = 1;
+  // STALE reads are served from the local replica without coordination. Cheap
+  // and scalable, but may return a value that has since been superseded, and
+  // may be served by a leader that has already been deposed.
+  CONSISTENCY_LEVEL_STALE = 2;
+}
+
+// RequestHeader carries the client identity used for exactly-once semantics.
+//
+// Raft guarantees a committed entry is applied at least once, not exactly once:
+// a client that times out and retries can have the same command committed
+// twice. The (client_id, sequence) pair lets the state machine recognise a
+// retry and return the original result instead of applying it again — which is
+// the difference between a retried increment being idempotent and double-
+// counting.
+message RequestHeader {
+  uint64 client_id = 1;
+  uint64 sequence = 2;
+}
+
+message PutRequest {
+  RequestHeader header = 1;
+  bytes key = 2;
+  bytes value = 3;
+}
+
+message PutResponse {
+  // The log index at which the write was committed, letting a caller correlate
+  // it with a subsequent read.
+  uint64 commit_index = 1;
+}
+
+message GetRequest {
+  bytes key = 1;
+  ConsistencyLevel consistency = 2;
+}
+
+message GetResponse {
+  bytes value = 1;
+  bool found = 2;
+  uint64 read_index = 3;
+}
+
+message DeleteRequest {
+  RequestHeader header = 1;
+  bytes key = 2;
+}
+
+message DeleteResponse {
+  bool existed = 1;
+  uint64 commit_index = 2;
+}
+
+// CompareAndSwapRequest is the primitive that makes the store useful for
+// coordination: it turns read-modify-write into a single committed decision, so
+// two clients racing on the same key cannot both succeed.
+message CompareAndSwapRequest {
+  RequestHeader header = 1;
+  bytes key = 2;
+  // The value the key must currently hold for the swap to proceed. When
+  // expect_absent is set, expected_value is ignored and the key must not exist,
+  // which expresses create-if-not-exists without a separate RPC.
+  bytes expected_value = 3;
+  bool expect_absent = 4;
+  bytes new_value = 5;
+}
+
+message CompareAndSwapResponse {
+  bool swapped = 1;
+  // The value actually found, so a failed swap needs no follow-up read.
+  bytes current_value = 2;
+  bool found = 3;
+  uint64 commit_index = 4;
+}
+
+// ConfChangeType enumerates membership operations.
+enum ConfChangeType {
+  CONF_CHANGE_TYPE_UNSPECIFIED = 0;
+  // Add a voting member. Prefer adding as a learner first: a new voter that is
+  // still catching up counts toward quorum while unable to satisfy it.
+  CONF_CHANGE_TYPE_ADD_VOTER = 1;
+  CONF_CHANGE_TYPE_ADD_LEARNER = 2;
+  CONF_CHANGE_TYPE_REMOVE_NODE = 3;
+  // Promote a caught-up learner to a voter.
+  CONF_CHANGE_TYPE_PROMOTE_LEARNER = 4;
+}
+
+message ChangeMembershipRequest {
+  ConfChangeType type = 1;
+  uint64 node_id = 2;
+  // Peer address for added nodes, so the cluster can reach a member it learns
+  // about from the log rather than from static configuration.
+  string address = 3;
+}
+
+message ChangeMembershipResponse {
+  uint64 commit_index = 1;
+}
+
+message StatusRequest {}
+
+// StatusResponse is the operator's view of a node: enough to answer "who is the
+// leader", "is this replica caught up", and "how far behind is the log".
+message StatusResponse {
+  uint64 node_id = 1;
+  string role = 2;
+  uint64 term = 3;
+  uint64 leader_id = 4;
+  uint64 commit_index = 5;
+  uint64 applied_index = 6;
+  uint64 last_log_index = 7;
+  uint64 snapshot_index = 8;
+  repeated PeerStatus peers = 9;
+}
+
+message PeerStatus {
+  uint64 node_id = 1;
+  string address = 2;
+  uint64 match_index = 3;
+  bool is_learner = 4;
+  bool reachable = 5;
+}
+
+// KVService is the client surface. Write methods must be handled by the leader;
+// a follower rejects them with a NOT_LEADER error carrying the current leader's
+// address so a client can be redirected in one hop rather than polling.
+service KVService {
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc CompareAndSwap(CompareAndSwapRequest) returns (CompareAndSwapResponse);
+  rpc ChangeMembership(ChangeMembershipRequest) returns (ChangeMembershipResponse);
+  rpc Status(StatusRequest) returns (StatusResponse);
+}

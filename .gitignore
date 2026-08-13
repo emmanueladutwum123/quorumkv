@@ -1,0 +1,18 @@
+# Build output
+bin/
+*.exe
+
+# Coverage
+coverage.out
+core.out
+*.test
+
+# Cluster runtime data: WAL segments and snapshots written by a local node
+data/
+*.wal
+*.snap
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
