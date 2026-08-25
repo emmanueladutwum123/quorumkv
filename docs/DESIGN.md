@@ -405,8 +405,65 @@ requests it has already served.
 
 ---
 
-## 10. Failure modes
+## 10. Verification
 
-To be extended as the corresponding machinery lands (M4–M7). Currently
-documented: leader crash, follower crash, symmetric and asymmetric partitions,
-disk loss, clock skew, and the log-repair path after a long partition.
+The unit suites check what somebody thought to check. The simulator exists for
+everything else.
+
+`internal/sim` runs an entire cluster — every node, the network between them,
+and the clients — inside one goroutine, driven by a seeded scheduler. There are
+no real timers, no sockets, and no concurrency, so a run is a pure function of
+its seed. That is the property everything else rests on: a failure reproduces
+exactly, on any machine, forever, and the seed in the failure message is the
+whole reproduction recipe.
+
+The faults are the ones that actually break consensus implementations: messages
+dropped, duplicated, reordered and delayed; the network partitioned and healed;
+nodes crashed with their volatile state discarded and restarted from disk alone;
+and clocks that tick at different rates, so no node's sense of elapsed time
+matches another's.
+
+### Deciding whether the result was correct
+
+Chaos alone proves nothing without an oracle, and asserting on internal state
+would only re-check what the implementation already believes. So the simulator
+records what clients *observed* — every operation with the interval over which it
+was in flight — and that history is checked for linearizability against the
+sequential specification of a key-value store.
+
+The interval is the crux. An operation may be placed anywhere inside its own
+interval, so concurrent operations can be ordered freely while non-overlapping
+ones cannot; that constraint is exactly what separates linearizability from
+sequential consistency, and it is what catches a stale read from a deposed
+leader. Two properties make the check tractable:
+
+- **Compositionality.** A history over independent objects is linearizable
+  exactly when every per-object sub-history is. Splitting by key turns one
+  intractable search over thousands of operations into many easy ones over a
+  handful. This holds only because compare-and-swap here is single-key; a
+  multi-key transaction would invalidate the split.
+- **Real time prunes the search.** Operations are held in a front index with a
+  small bitmask of stragglers placed out of order above it, so a history that is
+  merely sequential costs one step per operation instead of exploring
+  permutations its own timing forbids.
+
+Two cases are easy to get wrong and both would produce false accusations. An
+operation whose outcome the client never learned — a timeout, a deposed leader —
+may have taken effect or not, so both possibilities are explored; forcing either
+one makes a committed write look lost, or an uncommitted one look like a phantom.
+An operation still in flight when the run ends has no upper bound at all and can
+be ordered arbitrarily late, so those are held apart from the front-index scheme
+rather than blocking it.
+
+When the search cannot decide a history it says so rather than returning a pass.
+A checker that quietly answers "linearizable" when it ran out of room would make
+every scenario above verify nothing, which is a worse failure than a false alarm:
+it is silent.
+
+---
+
+## 11. Failure modes
+
+Currently documented: leader crash, follower crash, symmetric and asymmetric
+partitions, disk loss, clock skew, and the log-repair path after a long
+partition.

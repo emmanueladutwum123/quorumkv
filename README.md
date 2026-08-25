@@ -86,7 +86,7 @@ passes its tests, and leaves the repository in a presentable state.
 | M4 | Crash-safe WAL, atomic snapshots, log compaction | ✅ done |
 | M5 | gRPC transport, KV API, linearizable reads, CLI | ✅ done |
 | M6 | Joint-consensus membership changes, learners | ✅ done |
-| M7 | Deterministic fault injection, linearizability checker | in progress |
+| M7 | Deterministic fault injection, linearizability checker | ✅ done |
 | M8 | Metrics, benchmarks, Docker cluster, CI, design docs | planned |
 
 ## Quickstart
