@@ -106,13 +106,20 @@ jobs:
         run: |
           set -euo pipefail
           docker compose up -d --no-build
-          # A fresh cluster has to elect a leader before it can serve anything.
+          # Wait on readiness, not liveness. A fresh cluster answers /healthz the
+          # moment the process starts, which is well before an election has
+          # produced a leader -- waiting on that races the first write.
+          ready=false
           for i in $(seq 1 30); do
-            if docker compose exec -T node1 /usr/local/bin/quorumkvctl health 127.0.0.1:9100; then
+            if docker compose exec -T node1 /usr/local/bin/quorumkvctl ready 127.0.0.1:9100; then
+              ready=true
               break
             fi
             sleep 2
           done
+          if [ "$ready" != true ]; then
+            echo "no leader after 60s"; docker compose logs; exit 1
+          fi
           # Endpoints are explicit: each node binds to its own hostname, so the
           # CLI's 127.0.0.1 default finds nothing inside the container.
           docker compose exec -T node1 /usr/local/bin/quorumkvctl -endpoints node1:9000 put ci-key ci-value

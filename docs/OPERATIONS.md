@@ -59,11 +59,21 @@ gone wrong.
 | `/readyz` | Readiness: this node recognises a leader |
 | `/status` | JSON snapshot — role, term, indexes, per-peer replication |
 
+The CLI probes both, so a container healthcheck needs no shell or curl in the
+image:
+
+```bash
+quorumkvctl health 127.0.0.1:9100   # process is up
+quorumkvctl ready  127.0.0.1:9100   # a leader is known
+```
+
 **Wire your container runtime to `/healthz`, not `/readyz`.** A node that cannot
 see a leader is not broken and restarting it will not help. A liveness probe on
 readiness restarts every node in the cluster at once during a partition, which is
 exactly when the cluster least needs it. `/readyz` belongs on a load balancer,
-where "do not send this node traffic" is the correct response.
+where "do not send this node traffic" is the correct response. A script that
+starts a cluster and immediately writes should wait on `ready` for the same
+reason: liveness is green before the first election has finished.
 
 ## What to watch
 

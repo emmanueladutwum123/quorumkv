@@ -39,7 +39,8 @@ Commands:
   cas <key> <expected> <new>        replace a value only if it matches
   create <key> <value>              store a value only if the key is absent
   status                            report cluster state
-  health <admin-addr>               probe a node's liveness endpoint, for container checks
+  health <admin-addr>               probe liveness: the process is up
+  ready <admin-addr>                probe readiness: the node recognises a leader
   member add-learner <id> <addr>    add a non-voting member (safe way to grow)
   member promote <id>               promote a caught-up learner to a voter
   member add <id> <addr>            add a voter directly (raises quorum at once)
@@ -137,7 +138,12 @@ func (c *client) run(args []string, stale bool) error {
 		if len(rest) != 1 {
 			return errors.New("usage: health <admin-addr>")
 		}
-		return health(rest[0], c.timeout)
+		return probe(rest[0], "/healthz", c.timeout)
+	case "ready":
+		if len(rest) != 1 {
+			return errors.New("usage: ready <admin-addr>")
+		}
+		return probe(rest[0], "/readyz", c.timeout)
 	case "member":
 		return c.member(rest)
 	default:
@@ -145,25 +151,30 @@ func (c *client) run(args []string, stale bool) error {
 	}
 }
 
-// health probes a node's liveness endpoint.
+// probe requests one of the node's admin endpoints and reports the outcome as an
+// exit status.
 //
 // It exists so that a container healthcheck has something to run. The runtime
 // image has no shell and no curl by design, and shipping either one to make a
 // probe work would widen the attack surface of a consensus node for the sake of
 // a GET request.
 //
-// It deliberately probes liveness rather than readiness. A node that cannot see
-// a leader is not broken and restarting it will not help; a healthcheck wired to
-// readiness would restart every node in a cluster at once during a partition,
-// which is precisely when the cluster least needs it.
-func health(addr string, timeout time.Duration) error {
+// Which endpoint to point at is the caller's decision and it matters. Liveness
+// (`health`) says the process is up; a container runtime should act on that
+// alone, because a node that cannot see a leader is not broken and restarting it
+// will not help -- a restart policy wired to readiness takes down every node in a
+// cluster at once during a partition. Readiness (`ready`) says the node
+// recognises a leader, which is what a load balancer and a startup script want:
+// a fresh cluster answers liveness immediately but cannot serve anything until an
+// election completes.
+func probe(addr, path string, timeout time.Duration) error {
 	if !strings.Contains(addr, "://") {
 		addr = "http://" + addr
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(addr, "/")+"/healthz", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(addr, "/")+path, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
@@ -175,7 +186,7 @@ func health(addr string, timeout time.Duration) error {
 
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 512))
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("unhealthy: %s: %s", res.Status, strings.TrimSpace(string(body)))
+		return fmt.Errorf("%s: %s: %s", strings.TrimPrefix(path, "/"), res.Status, strings.TrimSpace(string(body)))
 	}
 	fmt.Println(strings.TrimSpace(string(body)))
 	return nil
