@@ -1,0 +1,8 @@
+bin/
+data/
+*.out
+*.test
+.git/
+.github/
+docs/
+README.md

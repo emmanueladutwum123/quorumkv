@@ -87,11 +87,17 @@ passes its tests, and leaves the repository in a presentable state.
 | M5 | gRPC transport, KV API, linearizable reads, CLI | ✅ done |
 | M6 | Joint-consensus membership changes, learners | ✅ done |
 | M7 | Deterministic fault injection, linearizability checker | ✅ done |
-| M8 | Metrics, benchmarks, Docker cluster, CI, design docs | planned |
+| M8 | Metrics endpoint, benchmarks, Docker cluster, CI, operations guide | ✅ done |
 
 ## Quickstart
 
 Start a three-node cluster on loopback:
+
+```bash
+docker compose up --build     # three nodes, each with its own volume
+```
+
+Or run them directly:
 
 ```bash
 make build
@@ -187,8 +193,13 @@ make test    # unit and integration suites
 make race    # the same suites under the race detector
 make cover   # coverage, reported separately for the consensus core
 make lint    # gofmt, go vet, and module tidiness
+make bench   # benchmarks, including an end-to-end three-node cluster
 make help    # list every target
 ```
+
+Every one of these runs in CI on each push, along with a Docker build that starts
+a three-node cluster and checks that a value written to one node reads back from
+another.
 
 ## Testing approach
 
@@ -203,6 +214,47 @@ duplicate, reorder and delay messages, skew clocks, and crash and restart nodes.
 Every operation history it produces is checked for linearizability, and any
 violation reproduces exactly from its seed.
 
+## Performance
+
+Numbers from `make bench` on an Apple M2, three nodes over loopback with real
+fsyncs. They are here because they say something about the design, not as a
+score:
+
+| | |
+|---|---|
+| Consensus round trip, 3 nodes (no disk, no network) | 5.0 µs |
+| Consensus round trip, 7 nodes | 13.8 µs |
+| Apply one command to the state machine | 183 ns |
+| Local read from the state machine | 24 ns |
+| WAL append + fsync, one entry | 2.7 ms |
+| WAL append + fsync, 256 entries | 3.2 ms (79k entries/s) |
+| Snapshot 100k keys | 24.6 ms |
+| End-to-end write through a 3-node cluster | 15.7 ms |
+| End-to-end linearizable read | 188 µs |
+| End-to-end stale read | 95 µs |
+
+Three things fall out of that table.
+
+**Durability is the whole cost.** The consensus algorithm settles a value across
+three nodes in five microseconds; the disk takes 2.7 milliseconds to make one
+entry durable. Everything else is rounding error, which is why batching matters:
+256 entries cost barely more than one, because they share a single sync.
+
+**Linearizable reads are cheap, and stale reads are cheaper.** A linearizable
+read confirms leadership with a round trip but appends nothing and syncs nothing,
+so it costs about 2 µs of consensus work and the rest is network. The stale mode
+skips the round trip entirely — that gap is exactly what the guarantee costs, and
+the reason both modes exist.
+
+**A write pays two syncs, and only one of them is required.** The first makes the
+entry durable, which Raft demands before it may be acknowledged. The second
+carries only the advanced commit index, which Raft does *not* require to be
+durable — a restarted node relearns it from the leader — and it lands before the
+client is answered. On hardware where a sync costs milliseconds, that is a large
+share of the 15.7 ms above spent on a guarantee the protocol does not need. It
+is measured, not yet changed: altering what is fsynced is a durability change and
+belongs in its own milestone with its own crash tests.
+
 ## Repository layout
 
 ```
@@ -214,8 +266,10 @@ internal/store    the replicated state machine (key-value + client sessions)
 internal/server   node wiring: raft core, storage, transport, client API
 internal/transport gRPC and in-memory peer transports
 internal/sim      deterministic cluster simulator and fault injection
+internal/metrics  Prometheus text exposition, no dependencies
 proto/            versioned RPC contracts
 docs/DESIGN.md    architecture, invariants, and failure-mode analysis
+docs/OPERATIONS.md running a cluster, metrics, membership, backup, tuning
 ```
 
 ## Further reading
@@ -223,6 +277,8 @@ docs/DESIGN.md    architecture, invariants, and failure-mode analysis
 - [`docs/DESIGN.md`](docs/DESIGN.md) — invariants the implementation maintains,
   and the reasoning behind each departure from a textbook transcription of the
   paper.
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — running a cluster, what the
+  metrics mean, growing and shrinking membership, backup and tuning.
 - Ongaro & Ousterhout, *In Search of an Understandable Consensus Algorithm*
   (2014) — the Raft paper. Section references throughout the code point here.
 

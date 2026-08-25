@@ -1,0 +1,130 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The Go version comes from go.mod in every job, so the toolchain CI uses and the
+# one the module declares cannot drift apart.
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make lint
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make build
+      - run: make test
+
+  race:
+    # The integration tests run real gRPC over loopback and real fsyncs, so this
+    # is where a data race between the consensus goroutine and the transport
+    # would surface. Slower than the plain suite, and the reason it is separate.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make race
+
+  simulation:
+    # The deterministic simulator, run over more seeds than the default suite
+    # uses. Convergence and linearizability bugs live in specific interleavings,
+    # so breadth here is worth more than depth anywhere else.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test ./internal/sim/ -count=3 -timeout 20m
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make cover
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            core.out
+
+  benchmarks:
+    # One iteration each: this checks that the benchmarks still compile and run,
+    # not how fast they are. Timings from a shared CI runner are noise, and
+    # treating them as a regression signal would produce failures nobody can act
+    # on.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -run '^$' -bench . -benchtime 1x ./...
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: quorumkv:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Start a three-node cluster and verify it serves
+        run: |
+          set -euo pipefail
+          docker compose up -d --no-build
+          # A fresh cluster has to elect a leader before it can serve anything.
+          for i in $(seq 1 30); do
+            if docker compose exec -T node1 /usr/local/bin/quorumkvctl health 127.0.0.1:9100; then
+              break
+            fi
+            sleep 2
+          done
+          # Endpoints are explicit: each node binds to its own hostname, so the
+          # CLI's 127.0.0.1 default finds nothing inside the container.
+          docker compose exec -T node1 /usr/local/bin/quorumkvctl -endpoints node1:9000 put ci-key ci-value
+          # Read back through a different node than the one written to, so the
+          # check fails if replication is not actually happening.
+          got=$(docker compose exec -T node2 /usr/local/bin/quorumkvctl -endpoints node2:9000 get ci-key)
+          echo "read back: $got"
+          case "$got" in
+            *ci-value*) echo "cluster serves reads and writes" ;;
+            *) echo "unexpected value: $got"; docker compose logs; exit 1 ;;
+          esac
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

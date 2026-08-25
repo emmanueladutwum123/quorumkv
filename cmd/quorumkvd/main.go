@@ -7,10 +7,13 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -29,6 +32,7 @@ func main() {
 	var (
 		id        = flag.Uint64("id", 0, "this node's id (required, non-zero, stable across restarts)")
 		addr      = flag.String("addr", "127.0.0.1:9000", "listen address for the peer and client APIs")
+		adminAddr = flag.String("admin-addr", "", "listen address for metrics and health probes, empty to disable")
 		dataDir   = flag.String("data-dir", "", "directory for the write-ahead log and snapshots (required)")
 		peerList  = flag.String("peers", "", "initial cluster as id=host:port,... including this node")
 		learner   = flag.Bool("learner", false, "join as a non-voting learner")
@@ -95,6 +99,27 @@ func main() {
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- grpcServer.Serve(listener) }()
 
+	// The admin surface listens separately from the data path on purpose. Peer
+	// and client traffic would be firewalled in any real deployment, and scraping
+	// and probing have to keep working when that path is what has gone wrong.
+	var adminServer *http.Server
+	if *adminAddr != "" {
+		adminServer = &http.Server{
+			Addr:              *adminAddr,
+			Handler:           srv.AdminHandler(),
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		go func() {
+			if err := adminServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				// Losing the metrics endpoint is not a reason to take a healthy node
+				// out of the cluster, so this is reported rather than fatal.
+				logger.Error("admin server failed", "error", err)
+			}
+		}()
+		logger.Info("admin endpoints listening", "addr", *adminAddr,
+			"paths", "/metrics /healthz /readyz /status")
+	}
+
 	logger.Info("node started",
 		"id", *id, "addr", *addr, "data_dir", *dataDir,
 		"peers", len(peers), "learner", *learner)
@@ -126,6 +151,11 @@ func main() {
 	// Stop accepting new work before shutting the node down, so no request is
 	// admitted that cannot be completed.
 	grpcServer.GracefulStop()
+	if adminServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = adminServer.Shutdown(ctx)
+		cancel()
+	}
 	if err := srv.Stop(); err != nil {
 		logger.Error("shutdown", "error", err)
 		os.Exit(1)

@@ -29,6 +29,7 @@ type testCluster struct {
 	nodes map[raft.NodeID]*testNodeProc
 	addrs map[raft.NodeID]string
 	dir   string
+	opts  []clusterOption
 }
 
 type testNodeProc struct {
@@ -44,13 +45,26 @@ type testNodeProc struct {
 // newTestCluster starts n nodes. Listeners are opened before the servers are
 // created so that each node's address is known to every other from the start,
 // without a discovery mechanism the test would otherwise have to fake.
-func newTestCluster(t testing.TB, n int) *testCluster {
+// clusterOption adjusts the configuration every node in a test cluster is
+// started with. It exists for the benchmarks: the default tick is deliberately
+// slow enough to keep tests readable, and a measurement taken under it reports
+// the harness's timer rather than anything about the system.
+type clusterOption func(*Config)
+
+// withTick sets the logical tick period, and with it how long a commit may wait
+// on a heartbeat.
+func withTick(d time.Duration) clusterOption {
+	return func(cfg *Config) { cfg.TickInterval = d }
+}
+
+func newTestCluster(t testing.TB, n int, opts ...clusterOption) *testCluster {
 	t.Helper()
 	c := &testCluster{
 		t:     t,
 		nodes: make(map[raft.NodeID]*testNodeProc, n),
 		addrs: make(map[raft.NodeID]string, n),
 		dir:   t.TempDir(),
+		opts:  opts,
 	}
 
 	listeners := make(map[raft.NodeID]net.Listener, n)
@@ -88,7 +102,7 @@ func (c *testCluster) start(id raft.NodeID) {
 		peers[pid] = addr
 	}
 
-	srv, err := New(Config{
+	cfg := Config{
 		NodeID:  id,
 		Addr:    n.addr,
 		DataDir: n.dataDir,
@@ -100,7 +114,12 @@ func (c *testCluster) start(id raft.NodeID) {
 		HeartbeatTimeoutTicks: 1,
 		SnapshotThreshold:     50,
 		RequestTimeout:        3 * time.Second,
-	})
+	}
+	for _, opt := range c.opts {
+		opt(&cfg)
+	}
+
+	srv, err := New(cfg)
 	if err != nil {
 		c.t.Fatalf("node %d: New: %v", id, err)
 	}
@@ -234,6 +253,32 @@ func (c *testCluster) putWithRetry(key, value string, clientID, seq uint64) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	c.t.Fatalf("put %q failed after retries: %v", key, lastErr)
+}
+
+// getWithRetry reads linearizably, tolerating leadership moving under it.
+//
+// It retries only transport and deadline failures, never a result. A read that
+// returns successfully is the answer, and retrying a missing key until it
+// appeared would turn data loss into a slow pass -- which is the one thing these
+// tests exist to catch.
+func (c *testCluster) getWithRetry(kv kvv1.KVServiceClient, key string) *kvv1.GetResponse {
+	c.t.Helper()
+	var lastErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		ctx, cancel := rpcCtx()
+		got, err := kv.Get(ctx, &kvv1.GetRequest{
+			Key:         []byte(key),
+			Consistency: kvv1.ConsistencyLevel_CONSISTENCY_LEVEL_LINEARIZABLE,
+		})
+		cancel()
+		if err == nil {
+			return got
+		}
+		lastErr = err
+		time.Sleep(100 * time.Millisecond)
+	}
+	c.t.Fatalf("get %q failed after retries: %v", key, lastErr)
+	return nil
 }
 
 // --- tests -----------------------------------------------------------------
@@ -393,15 +438,10 @@ func TestCommittedDataSurvivesLeaderFailure(t *testing.T) {
 	kv, done := c.kvClient(newLeader.id)
 	defer done()
 	for i := 0; i < 10; i++ {
-		ctx, cancel := rpcCtx()
-		got, err := kv.Get(ctx, &kvv1.GetRequest{
-			Key:         []byte(fmt.Sprintf("k%02d", i)),
-			Consistency: kvv1.ConsistencyLevel_CONSISTENCY_LEVEL_LINEARIZABLE,
-		})
-		cancel()
-		if err != nil {
-			t.Fatalf("Get after failover: %v", err)
-		}
+		// Retried because leadership can move again while the cluster settles,
+		// which costs another election. The assertion below is unchanged: the data
+		// must be there, and correct.
+		got := c.getWithRetry(kv, fmt.Sprintf("k%02d", i))
 		if want := fmt.Sprintf("v%02d", i); !got.GetFound() || string(got.GetValue()) != want {
 			t.Errorf("k%02d = (found %v, %q) after failover, want %q",
 				i, got.GetFound(), got.GetValue(), want)

@@ -11,7 +11,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"math/rand/v2"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -37,6 +39,7 @@ Commands:
   cas <key> <expected> <new>        replace a value only if it matches
   create <key> <value>              store a value only if the key is absent
   status                            report cluster state
+  health <admin-addr>               probe a node's liveness endpoint, for container checks
   member add-learner <id> <addr>    add a non-voting member (safe way to grow)
   member promote <id>               promote a caught-up learner to a voter
   member add <id> <addr>            add a voter directly (raises quorum at once)
@@ -130,11 +133,52 @@ func (c *client) run(args []string, stale bool) error {
 		return c.cas(rest[0], "", rest[1], true)
 	case "status":
 		return c.status()
+	case "health":
+		if len(rest) != 1 {
+			return errors.New("usage: health <admin-addr>")
+		}
+		return health(rest[0], c.timeout)
 	case "member":
 		return c.member(rest)
 	default:
 		return fmt.Errorf("unknown command %q", cmd)
 	}
+}
+
+// health probes a node's liveness endpoint.
+//
+// It exists so that a container healthcheck has something to run. The runtime
+// image has no shell and no curl by design, and shipping either one to make a
+// probe work would widen the attack surface of a consensus node for the sake of
+// a GET request.
+//
+// It deliberately probes liveness rather than readiness. A node that cannot see
+// a leader is not broken and restarting it will not help; a healthcheck wired to
+// readiness would restart every node in a cluster at once during a partition,
+// which is precisely when the cluster least needs it.
+func health(addr string, timeout time.Duration) error {
+	if !strings.Contains(addr, "://") {
+		addr = "http://" + addr
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(addr, "/")+"/healthz", nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("probe %s: %w", addr, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 512))
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("unhealthy: %s: %s", res.Status, strings.TrimSpace(string(body)))
+	}
+	fmt.Println(strings.TrimSpace(string(body)))
+	return nil
 }
 
 // member runs a membership subcommand.

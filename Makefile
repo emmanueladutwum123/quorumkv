@@ -30,6 +30,16 @@ test: ## Run the unit and integration test suites
 race: ## Run tests under the race detector
 	$(GO) test -race ./...
 
+# Benchmarks are excluded from `make test` because they are slow and their
+# numbers are meaningless on a loaded machine; run them deliberately.
+.PHONY: bench
+bench: ## Run all benchmarks
+	$(GO) test -run '^$$' -bench . -benchmem ./...
+
+.PHONY: bench-core
+bench-core: ## Benchmark the consensus core and storage only, skipping the network
+	$(GO) test -run '^$$' -bench . -benchmem ./internal/raft/ ./internal/wal/ ./internal/store/
+
 # The consensus core is the part where a missed branch is a correctness bug
 # rather than a cosmetic gap, so its coverage is reported separately from the
 # whole-module figure that plumbing and generated code would dilute.

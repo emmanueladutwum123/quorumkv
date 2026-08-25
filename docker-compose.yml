@@ -1,0 +1,63 @@
+# A three-node cluster, which is the smallest configuration that can actually
+# lose a node and keep serving. A single node would demonstrate the API but
+# nothing about consensus; five would demonstrate the same thing as three while
+# taking longer to start.
+services:
+  node1: &node
+    build: .
+    image: quorumkv:local
+    command:
+      - -id=1
+      - -addr=node1:9000
+      - -admin-addr=0.0.0.0:9100
+      - -data-dir=/data
+      - -peers=1=node1:9000,2=node2:9000,3=node3:9000
+    volumes:
+      - node1-data:/data
+    ports:
+      # Only node 1's ports are published. A client may talk to any node and be
+      # redirected to the leader, so one entry point is enough to try the cluster
+      # out, and publishing all three invites confusion about which is which.
+      - "9000:9000"
+      - "9100:9100"
+    healthcheck:
+      # /healthz answers liveness, which is what a container runtime should act
+      # on. Readiness deliberately does not gate the container: a node that
+      # cannot see a leader is not broken, and restarting it during a partition
+      # would turn one outage into a restart loop across the cluster.
+      test: ["CMD", "/usr/local/bin/quorumkvctl", "health", "127.0.0.1:9100"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  node2:
+    <<: *node
+    command:
+      - -id=2
+      - -addr=node2:9000
+      - -admin-addr=0.0.0.0:9100
+      - -data-dir=/data
+      - -peers=1=node1:9000,2=node2:9000,3=node3:9000
+    volumes:
+      - node2-data:/data
+    ports: []
+
+  node3:
+    <<: *node
+    command:
+      - -id=3
+      - -addr=node3:9000
+      - -admin-addr=0.0.0.0:9100
+      - -data-dir=/data
+      - -peers=1=node1:9000,2=node2:9000,3=node3:9000
+    volumes:
+      - node3-data:/data
+    ports: []
+
+# Named volumes rather than bind mounts, so the log survives `docker compose
+# down` and a restarted cluster recovers instead of forming a new one.
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
