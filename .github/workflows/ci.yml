@@ -97,7 +97,9 @@ jobs:
           context: .
           push: false
           load: true
-          tags: quorumkv:ci
+          # Must match the image name in docker-compose.yml, which is started
+          # with --no-build below; a different tag sends compose to Docker Hub.
+          tags: quorumkv:local
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Start a three-node cluster and verify it serves
